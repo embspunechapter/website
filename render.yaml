@@ -1,11 +1,9 @@
 # Render Blueprint configuration file
 # This defines the settings for deploying the EMBS Internship Portal on Render.
-services:
-  - type: web
-    name: embs-internship-portal
-    env: static
+staticSites:
+  - name: embs-internship-portal
     buildCommand: npm run build
-    staticPublishDir: dist
+    publishDir: dist
     routes:
       # Rewrite all routes to index.html to support React Router single-page navigation
       - type: rewrite
