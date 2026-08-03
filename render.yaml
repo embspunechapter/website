@@ -1,0 +1,23 @@
+# Render Blueprint configuration file
+# This defines the settings for deploying the EMBS Internship Portal on Render.
+services:
+  - type: web
+    name: embs-internship-portal
+    runtime: static
+    buildCommand: npm run build
+    publishDir: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      # Rewrite all routes to index.html to support React Router single-page navigation
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Placeholder prompts for your Supabase keys on Render dashboard
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
