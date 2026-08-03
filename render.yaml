@@ -13,4 +13,6 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_SUPABASE_URL
+        value: placeholder
       - key: VITE_SUPABASE_ANON_KEY
+        value: placeholder
