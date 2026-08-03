@@ -5,7 +5,7 @@ services:
     name: embs-internship-portal
     env: static
     buildCommand: npm run build
-    publishDir: dist
+    staticPublishDir: dist
     routes:
       # Rewrite all routes to index.html to support React Router single-page navigation
       - type: rewrite
