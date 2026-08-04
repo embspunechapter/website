@@ -50,17 +50,18 @@
 body {
   font-family: 'Inter', sans-serif;
   background-color: #f4f6fc;
-  /* Glowing mesh background + engineering grid lines */
+  /* Glowing mesh background + engineering grid lines + DNA watermark pattern */
   background-image: 
     linear-gradient(rgba(226, 232, 240, 0.3) 1px, transparent 1px),
     linear-gradient(90deg, rgba(226, 232, 240, 0.3) 1px, transparent 1px),
+    url('/embs_bg_pattern.jpg'),
     radial-gradient(at 0% 0%, rgba(0, 98, 155, 0.08) 0px, transparent 55%),
     radial-gradient(at 100% 0%, rgba(106, 27, 154, 0.09) 0px, transparent 55%),
-    radial-gradient(at 50% 50%, rgba(0, 180, 216, 0.05) 0px, transparent 60%),
-    radial-gradient(at 100% 100%, rgba(106, 27, 154, 0.07) 0px, transparent 50%),
-    radial-gradient(at 0% 100%, rgba(0, 98, 155, 0.06) 0px, transparent 50%);
-  background-size: 40px 40px, 40px 40px, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+    radial-gradient(at 50% 50%, rgba(0, 180, 216, 0.05) 0px, transparent 60%);
+  background-size: 40px 40px, 40px 40px, 450px 450px, 100% 100%, 100% 100%, 100% 100%;
   background-attachment: fixed;
+  background-repeat: repeat, repeat, repeat, no-repeat, no-repeat, no-repeat;
+  background-blend-mode: normal, normal, overlay, normal, normal, normal;
   color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
