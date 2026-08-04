@@ -57,7 +57,7 @@ export default function AdminDashboard() {
       const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }, { data: templateData, error: templateError }] = await Promise.all([
         supabase.from('profiles').select('*').order('full_name'),
         supabase.from('groups').select('*').order('id'),
-        supabase.from('reports').select('*').order('created_at', { ascending: false }),
+        supabase.from('reports').select('*').eq('status', 'approved').order('created_at', { ascending: false }),
         supabase.from('announcements').select('*').order('created_at', { ascending: false }),
         supabase.from('certificates').select('*').order('issued_at', { ascending: false }),
         supabase.from('templates').select('*').order('created_at', { ascending: false })
@@ -388,6 +388,33 @@ export default function AdminDashboard() {
     }
   };
 
+  const makeTeamLead = async (studentId, groupId) => {
+    setSaving(true);
+    try {
+      // 1. Set is_lead = false for everyone in this group (using dummy condition to satisfy update requirements)
+      const { error: resetError } = await supabase
+        .from('profiles')
+        .update({ is_lead: false })
+        .eq('group_id', groupId)
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (resetError) throw resetError;
+
+      // 2. Set is_lead = true for this student
+      const { error: setLeadError } = await supabase
+        .from('profiles')
+        .update({ is_lead: true })
+        .eq('id', studentId);
+      if (setLeadError) throw setLeadError;
+
+      await fetchDashboardData();
+      showNotice('Team Lead assigned successfully.');
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to assign Team Lead: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
   const postAnnouncement = async (e) => {
     e.preventDefault();
     if (!announcementForm.title || !announcementForm.content) return;
@@ -955,19 +982,33 @@ export default function AdminDashboard() {
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
                           <strong>Members ({group.members.length}):</strong>
                           <ul style={{ paddingLeft: '1rem', marginTop: '0.2rem' }}>
-                            {group.members.map(m => (
-                              <li key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
-                                {m.full_name}
-                                <select 
-                                  value={group.id} 
-                                  onChange={(e) => moveStudentGroup(m.id, e.target.value)}
-                                  style={{ padding: '0.1rem', fontSize: '0.7rem', width: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--ieee-purple)', fontWeight: 600 }}
-                                >
-                                  {groups.map(g => <option key={g.id} value={g.id}>Move to {g.id}</option>)}
-                                  <option value="">Remove from group</option>
-                                </select>
-                              </li>
-                            ))}
+                             {group.members.map(m => (
+                               <li key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                   {m.full_name}
+                                   {m.is_lead && <span style={{ color: 'var(--warning)', fontWeight: 600, fontSize: '0.7rem' }} title="Team Lead">👑 Lead</span>}
+                                 </span>
+                                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                   {!m.is_lead && (
+                                     <button 
+                                       type="button" 
+                                       onClick={() => makeTeamLead(m.id, group.id)}
+                                       style={{ border: 'none', background: 'transparent', color: 'var(--ieee-blue)', cursor: 'pointer', fontSize: '0.65rem', textDecoration: 'underline', padding: 0 }}
+                                     >
+                                       Set Lead
+                                     </button>
+                                   )}
+                                   <select 
+                                     value={group.id} 
+                                     onChange={(e) => moveStudentGroup(m.id, e.target.value)}
+                                     style={{ padding: '0.1rem', fontSize: '0.7rem', width: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--ieee-purple)', fontWeight: 600 }}
+                                   >
+                                     {groups.map(g => <option key={g.id} value={g.id}>Move to {g.id}</option>)}
+                                     <option value="">Remove from group</option>
+                                   </select>
+                                 </div>
+                               </li>
+                             ))}
                           </ul>
                         </div>
                       </div>

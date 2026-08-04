@@ -567,27 +567,40 @@ export default function StudentDashboard() {
         <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '2rem', alignItems: 'start', flexWrap: 'wrap' }}>
           
           {/* Submit report form */}
-          <div className="glass" style={card}>
-            <h3>Submit Progress Report</h3>
-            <p style={muted}>Submit report and file updates to your mentor.</p>
-            <form onSubmit={submitReport} style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Report Title</label>
-                <input required placeholder="E.g., Weekly Report 3, Design Proposal" value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} disabled={!profile.group_id} />
+          {profile.is_lead ? (
+            <div className="glass" style={card}>
+              <h3>Submit Progress Report</h3>
+              <p style={muted}>Submit report and file updates to your mentor.</p>
+              <form onSubmit={submitReport} style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Report Title</label>
+                  <input required placeholder="E.g., Weekly Report 3, Design Proposal" value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} disabled={!profile.group_id} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Summary / Content</label>
+                  <textarea placeholder="Briefly describe your progress, updates, links, or issues..." value={reportContent} onChange={(e) => setReportContent(e.target.value)} disabled={!profile.group_id} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Upload File (PDF/Docs/ZIP)</label>
+                  <input ref={fileRef} type="file" onChange={(e) => setReportFile(e.target.files?.[0] || null)} disabled={!profile.group_id} />
+                </div>
+                <button className="btn btn-primary" disabled={busy || !profile.group_id}>
+                  {busy ? 'Uploading...' : 'Submit Report'}
+                </button>
+              </form>
+            </div>
+          ) : (
+            <div className="glass" style={{ ...card, background: 'rgba(239, 68, 68, 0.02)', borderColor: 'rgba(239, 68, 68, 0.15)' }}>
+              <h3 style={{ color: 'var(--error)' }}>Report Submissions Locked</h3>
+              <p style={{ ...muted, marginTop: '0.5rem' }}>
+                Only the designated <strong>Team Lead</strong> of your internship group can upload and submit reports.
+              </p>
+              <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#fff', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+                <span>👑</span>
+                <span>Contact your Coordinator or Group Mentor to assign a Team Lead for your group.</span>
               </div>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Summary / Content</label>
-                <textarea placeholder="Briefly describe your progress, updates, links, or issues..." value={reportContent} onChange={(e) => setReportContent(e.target.value)} disabled={!profile.group_id} />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Upload File (PDF/Docs/ZIP)</label>
-                <input ref={fileRef} type="file" onChange={(e) => setReportFile(e.target.files?.[0] || null)} disabled={!profile.group_id} />
-              </div>
-              <button className="btn btn-primary" disabled={busy || !profile.group_id}>
-                {busy ? 'Uploading...' : 'Submit Report'}
-              </button>
-            </form>
-          </div>
+            </div>
+          )}
 
           {/* List report history and resubmissions */}
           <div className="glass" style={card}>
@@ -611,7 +624,7 @@ export default function StudentDashboard() {
                           <span className={`badge ${report.status === 'approved' ? 'badge-success' : report.status === 'changes_requested' ? 'badge-error' : report.status === 'in_review' ? 'badge-warning' : 'badge-info'}`}>
                             {report.status.replace('_', ' ')}
                           </span>
-                          {report.status === 'changes_requested' && (
+                          {report.status === 'changes_requested' && profile.is_lead && (
                             <button 
                               className="btn btn-secondary" 
                               style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem' }}
