@@ -167,6 +167,34 @@ export default function AdminDashboard() {
           .from('meetings')
           .update({ mentor_id: null })
           .in('mentor_id', idsToDelete);
+
+        // Clear mentor reviews in reports
+        await supabase
+          .from('reports')
+          .update({
+            reviewed_by: null,
+            reviewed_at: null,
+            feedback: null,
+            status: 'submitted'
+          })
+          .in('reviewed_by', idsToDelete);
+
+        // Clear milestones updated by mentor
+        await supabase
+          .from('milestones')
+          .update({
+            updated_by: null
+          })
+          .in('updated_by', idsToDelete);
+
+        // Clear announcements created by mentor
+        await supabase
+          .from('announcements')
+          .update({
+            created_by: null
+          })
+          .in('created_by', idsToDelete);
+
       } else if (role === 'student') {
         // Delete student certificates and reports
         await supabase
@@ -177,7 +205,7 @@ export default function AdminDashboard() {
         await supabase
           .from('reports')
           .delete()
-          .in('student_id', idsToDelete);
+          .in('submitted_by', idsToDelete);
       }
 
       // Now delete the profiles
