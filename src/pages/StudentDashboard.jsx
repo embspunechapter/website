@@ -21,6 +21,19 @@ export default function StudentDashboard() {
   const [queries, setQueries] = useState([]);
   const [certificate, setCertificate] = useState(null);
   const [showCert, setShowCert] = useState(false);
+  const [templates, setTemplates] = useState([]);
+
+  useEffect(() => {
+    const fetchTemplates = async () => {
+      try {
+        const { data } = await supabase.from('templates').select('*').order('name');
+        if (data) setTemplates(data);
+      } catch (error) {
+        console.error('Error fetching templates:', error);
+      }
+    };
+    fetchTemplates();
+  }, []);
   
   // Submit Form States
   const [queryInput, setQueryInput] = useState('');
@@ -441,18 +454,33 @@ export default function StudentDashboard() {
 
             {/* Starter Kit Guidelines */}
             <div className="glass" style={card}>
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}><FileUp size={20} style={{ color: 'var(--ieee-purple)' }} /> Starter Kit & Templates</h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Download template documentation guidelines for your report submissions:</p>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}><FileUp size={20} style={{ color: 'var(--ieee-purple)' }} /> Starter Kit & Formats</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Download template guidelines and formats uploaded by the Coordinator:</p>
               <div style={{ display: 'grid', gap: '0.75rem', fontSize: '0.85rem' }}>
-                <a href="https://embs.org/templates/proposal_template.docx" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--ieee-blue)', textDecoration: 'none', fontWeight: 600, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-                  <FileUp size={16} /> Project Proposal Format (.docx)
-                </a>
-                <a href="https://embs.org/templates/midterm_report_format.docx" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--ieee-blue)', textDecoration: 'none', fontWeight: 600, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-                  <FileUp size={16} /> Mid-Term Progress Format (.docx)
-                </a>
-                <a href="https://embs.org/templates/final_report_format.docx" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--ieee-blue)', textDecoration: 'none', fontWeight: 600, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-                  <FileUp size={16} /> Final Thesis Format (.docx)
-                </a>
+                {templates.length === 0 ? (
+                  <div style={{ padding: '0.5rem', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-sm)' }}>
+                    No formats uploaded yet.
+                  </div>
+                ) : (
+                  templates.map(t => (
+                    <a 
+                      key={t.id}
+                      href={t.file_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', color: 'var(--ieee-blue)', textDecoration: 'none', fontWeight: 600, padding: '0.6rem 0.8rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', transition: 'all var(--transition-fast)' }}
+                      className="glass-hover"
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {t.type === 'report' ? <FileUp size={16} style={{ color: 'var(--info)' }} /> : t.type === 'presentation' ? <BookOpen size={16} style={{ color: 'var(--success)' }} /> : <Award size={16} style={{ color: 'var(--warning)' }} />}
+                        <span>{t.name}</span>
+                      </div>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 500, background: 'rgba(0,0,0,0.05)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
+                        {t.type === 'report' ? 'DOC' : t.type === 'presentation' ? 'PPT' : 'CERT'}
+                      </span>
+                    </a>
+                  ))
+                )}
               </div>
             </div>
           </div>

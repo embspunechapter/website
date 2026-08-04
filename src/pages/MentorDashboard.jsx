@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { 
-  Users, BookOpen, HelpCircle, ClipboardList, Save, UserCheck, Phone, MapPin, Tag, Bell
+  Users, BookOpen, HelpCircle, ClipboardList, Save, UserCheck, Phone, MapPin, Tag, Bell,
+  FileSpreadsheet, FileUp
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -22,6 +23,19 @@ export default function MentorDashboard() {
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [announcements, setAnnouncements] = useState([]);
   const [certificates, setCertificates] = useState([]);
+  const [templates, setTemplates] = useState([]);
+
+  useEffect(() => {
+    const fetchTemplates = async () => {
+      try {
+        const { data } = await supabase.from('templates').select('*').order('name');
+        if (data) setTemplates(data);
+      } catch (error) {
+        console.error('Error fetching templates:', error);
+      }
+    };
+    fetchTemplates();
+  }, []);
   
   // Profile Form State
   const [profileForm, setProfileForm] = useState({
@@ -490,6 +504,7 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
           <button className={`btn ${activeTab === 'meetings' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('meetings')}><BookOpen size={16} /> Meeting Logs</button>
           <button className={`btn ${activeTab === 'announcements' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('announcements')}><Bell size={16} /> Notices</button>
           <button className={`btn ${activeTab === 'queries' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('queries')}><HelpCircle size={16} /> Queries ({queries.filter(q => !q.answer).length})</button>
+          <button className={`btn ${activeTab === 'templates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('templates')}><FileSpreadsheet size={16} /> Formats</button>
           <button className={`btn ${activeTab === 'profile' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('profile')}><UserCheck size={16} /> My Profile</button>
         </div>
       </div>
@@ -999,6 +1014,35 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                 </article>
               ))
             }
+          </div>
+        </div>
+      )}
+      {activeTab === 'templates' && (
+        <div className="glass animate-fade-in" style={card}>
+          <h3><FileSpreadsheet size={20} style={{ color: 'var(--ieee-blue)' }} /> Resource Formats & Templates</h3>
+          <p style={muted}>Download official guidelines, PPT templates, and certificate formats uploaded by the Coordinator.</p>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginTop: '1.5rem' }}>
+            {templates.length === 0 ? (
+              <p style={muted}>No formats uploaded yet.</p>
+            ) : (
+              templates.map(t => (
+                <div key={t.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '1.25rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff', gap: '1rem' }} className="glass-hover">
+                  <div>
+                    <span className={`badge ${t.type === 'report' ? 'badge-info' : t.type === 'presentation' ? 'badge-success' : 'badge-warning'}`} style={{ marginBottom: '0.5rem' }}>
+                      {t.type === 'report' ? 'Report Doc' : t.type === 'presentation' ? 'Presentation PPT' : 'Certificate Format'}
+                    </span>
+                    <h4 style={{ color: 'var(--ieee-dark-blue)', margin: 0, fontSize: '0.95rem' }}>{t.name}</h4>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block', marginTop: '0.35rem' }}>
+                      Uploaded: {new Date(t.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <a href={t.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', width: '100%' }}>
+                    <FileUp size={14} /> Download Format
+                  </a>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

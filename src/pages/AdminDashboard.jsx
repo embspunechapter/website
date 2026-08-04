@@ -23,6 +23,9 @@ export default function AdminDashboard() {
   const [selectedMembers, setSelectedMembers] = useState({});
   const [managementSearch, setManagementSearch] = useState('');
   const [manageRole, setManageRole] = useState('student');
+  const [templates, setTemplates] = useState([]);
+  const [newTemplate, setNewTemplate] = useState({ name: '', type: 'report', file: null });
+  const fileInputRef = useRef(null);
   
   // Filtering and Searching
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,12 +54,13 @@ export default function AdminDashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }] = await Promise.all([
+      const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }, { data: templateData, error: templateError }] = await Promise.all([
         supabase.from('profiles').select('*').order('full_name'),
         supabase.from('groups').select('*').order('id'),
         supabase.from('reports').select('*').order('created_at', { ascending: false }),
         supabase.from('announcements').select('*').order('created_at', { ascending: false }),
-        supabase.from('certificates').select('*').order('issued_at', { ascending: false })
+        supabase.from('certificates').select('*').order('issued_at', { ascending: false }),
+        supabase.from('templates').select('*').order('created_at', { ascending: false })
       ]);
 
       if (profilesError) throw profilesError;
@@ -64,12 +68,14 @@ export default function AdminDashboard() {
       if (reportError) throw reportError;
       if (annError) throw annError;
       if (certError) throw certError;
+      if (templateError) throw templateError;
 
       const allProfiles = profiles || [];
       setStudents(allProfiles.filter((profile) => profile.role === 'student'));
       setMentors(allProfiles.filter((profile) => profile.role === 'mentor'));
       setAnnouncements(annData || []);
       setCertificates(certData || []);
+      setTemplates(templateData || []);
       
       setGroups((groupData || []).map((group) => ({
         ...group,
@@ -94,6 +100,96 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  const handleUploadTemplate = async (e) => {
+    e.preventDefault();
+    if (!newTemplate.name || !newTemplate.file) {
+      showNotice('Format name and file are required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const file = newTemplate.file;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${crypto.randomUUID()}.${fileExt}`;
+      const filePath = `formats/${fileName}`;
+
+      // Upload file to Supabase storage bucket 'templates'
+      const { error: uploadError } = await supabase.storage
+        .from('templates')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('templates')
+        .getPublicUrl(filePath);
+
+      // Insert record in templates table
+      const { error: insertError } = await supabase
+        .from('templates')
+        .insert({
+          name: newTemplate.name.trim(),
+          type: newTemplate.type,
+          file_url: publicUrl
+        });
+
+      if (insertError) throw insertError;
+
+      setNewTemplate({ name: '', type: 'report', file: null });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      
+      // Refresh dashboard data
+      const { data: templateData, error: templateError } = await supabase
+        .from('templates')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!templateError && templateData) {
+        setTemplates(templateData);
+      }
+
+      showNotice('Format uploaded successfully.');
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to upload format: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (template) => {
+    if (!window.confirm(`Are you sure you want to delete the format "${template.name}"?`)) return;
+    setSaving(true);
+    try {
+      // Extract filename from file_url
+      // Example: https://.../storage/v1/object/public/templates/formats/abc-123.pdf
+      const urlParts = template.file_url.split('/storage/v1/object/public/templates/');
+      const filePath = urlParts[1];
+      if (filePath) {
+        await supabase.storage.from('templates').remove([filePath]);
+      }
+      
+      const { error } = await supabase.from('templates').delete().eq('id', template.id);
+      if (error) throw error;
+      
+      // Refresh templates
+      const { data: templateData } = await supabase
+        .from('templates')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (templateData) {
+        setTemplates(templateData);
+      }
+
+      showNotice('Format deleted successfully.');
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to delete format: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const savePerson = async (event) => {
     event.preventDefault();
@@ -657,6 +753,7 @@ export default function AdminDashboard() {
           <button className={`btn ${activeTab === 'announcements' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('announcements')}><Bell size={16} /> Announcements</button>
           <button className={`btn ${activeTab === 'reports' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('reports')}><FileText size={16} /> Reports</button>
           <button className={`btn ${activeTab === 'certificates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('certificates')}><Award size={16} /> Certificates</button>
+          <button className={`btn ${activeTab === 'templates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('templates')}><FileSpreadsheet size={16} /> Formats</button>
         </div>
       </div>
 
@@ -1423,6 +1520,89 @@ export default function AdminDashboard() {
           </div>
         );
       })()}
+
+      {activeTab === 'templates' && (
+        <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '1.5rem', flexWrap: 'wrap' }}>
+          {/* Upload Format Form */}
+          <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+            <h3>Upload Resource Format</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Upload templates for reports, presentations, and certificates that students and mentors can download.</p>
+            
+            <form onSubmit={handleUploadTemplate} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Format Title / Name</label>
+                <input 
+                  required 
+                  placeholder="e.g. Project Proposal Format" 
+                  value={newTemplate.name} 
+                  onChange={(e) => setNewTemplate({ ...newTemplate, name: e.target.value })} 
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Resource Type</label>
+                <select 
+                  value={newTemplate.type} 
+                  onChange={(e) => setNewTemplate({ ...newTemplate, type: e.target.value })}
+                >
+                  <option value="report">Report / Document (.docx, .pdf)</option>
+                  <option value="presentation">Presentation / PPT (.pptx, .ppt)</option>
+                  <option value="certificate">Certificate Format / Template (.pdf, .png)</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Select File</label>
+                <input 
+                  ref={fileInputRef} 
+                  type="file" 
+                  required 
+                  onChange={(e) => setNewTemplate({ ...newTemplate, file: e.target.files?.[0] || null })} 
+                  style={{ border: 'none', background: 'transparent', padding: '0.5rem 0' }}
+                />
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={saving} style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                <Upload size={16} /> {saving ? 'Uploading...' : 'Upload Format'}
+              </button>
+            </form>
+          </div>
+
+          {/* Formats list */}
+          <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+            <h3>Uploaded Formats & Templates ({templates.length})</h3>
+            <div style={{ display: 'grid', gap: '1rem', marginTop: '1.25rem', maxHeight: '550px', overflowY: 'auto' }}>
+              {templates.length === 0 ? (
+                <p style={{ color: 'var(--text-secondary)' }}>No resource formats uploaded yet.</p>
+              ) : (
+                templates.map(t => (
+                  <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
+                    <div>
+                      <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{t.name}</strong>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
+                        <span className={`badge ${t.type === 'report' ? 'badge-info' : t.type === 'presentation' ? 'badge-success' : 'badge-warning'}`}>
+                          {t.type === 'report' ? 'Report Doc' : t.type === 'presentation' ? 'Presentation PPT' : 'Certificate Format'}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Uploaded: {new Date(t.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <a href={t.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}>
+                        Download
+                      </a>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.35rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                        onClick={() => handleDeleteTemplate(t)}
+                        disabled={saving}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Certificate Printing Layout Overlay */}
       {certToPrint && (
