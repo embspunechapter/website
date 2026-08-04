@@ -330,6 +330,51 @@ export default function AdminDashboard() {
     }
   };
 
+  const revertInternshipApproval = async (studentId) => {
+    if (!window.confirm('Are you sure you want to revert the completion approval for this student? Both Admin and Mentor approvals will be revoked.')) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('certificates')
+        .delete()
+        .eq('student_id', studentId);
+      if (error) throw error;
+      
+      await fetchDashboardData();
+      showNotice('Approval reverted successfully.');
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to revert approval: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const bulkRevertCertificates = async () => {
+    const studentIds = Object.keys(selectedForCert).filter(id => {
+      return selectedForCert[id] && certificates.some(c => c.student_id === id && c.admin_approved);
+    });
+    if (!studentIds.length) return;
+    if (!window.confirm(`Revoke completion approval for ${studentIds.length} selected student(s)? Both Admin and Mentor approvals will be deleted.`)) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('certificates')
+        .delete()
+        .in('student_id', studentIds);
+      if (error) throw error;
+
+      await fetchDashboardData();
+      setSelectedForCert({});
+      showNotice(`Successfully reverted completions for ${studentIds.length} students.`);
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to bulk revert: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // CSV Import Helpers
   const readRows = (file, callback) => {
     const reader = new FileReader();
@@ -973,7 +1018,12 @@ export default function AdminDashboard() {
 
       {activeTab === 'certificates' && (() => {
         const unapprovedStudents = students.filter(s => s.group_id && !certificates.some(c => c.student_id === s.id && c.admin_approved));
-        const selectedCount = Object.keys(selectedForCert).filter(id => selectedForCert[id]).length;
+        const selectedUnapprovedCount = Object.keys(selectedForCert).filter(id => {
+          return selectedForCert[id] && !certificates.some(c => c.student_id === id && c.admin_approved);
+        }).length;
+        const selectedApprovedCount = Object.keys(selectedForCert).filter(id => {
+          return selectedForCert[id] && certificates.some(c => c.student_id === id && c.admin_approved);
+        }).length;
         const isAllSelected = unapprovedStudents.length > 0 && unapprovedStudents.every(s => selectedForCert[s.id]);
 
         return (
@@ -984,8 +1034,8 @@ export default function AdminDashboard() {
               <h3>Mark Completion & Issue Certificate</h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Only students who have completed all requirements should be issued certificates.</p>
               
-              {unapprovedStudents.length > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-primary)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.25rem', border: '1px solid var(--border-color)' }}>
+              {(unapprovedStudents.length > 0 || selectedApprovedCount > 0) && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-primary)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.25rem', border: '1px solid var(--border-color)', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', margin: 0 }}>
                     <input 
                       type="checkbox" 
@@ -1003,16 +1053,28 @@ export default function AdminDashboard() {
                     />
                     Select All Pending ({unapprovedStudents.length})
                   </label>
-                  {selectedCount > 0 && (
-                    <button 
-                      className="btn btn-primary" 
-                      style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', background: 'var(--ieee-blue)' }}
-                      onClick={bulkApproveCertificates}
-                      disabled={saving}
-                    >
-                      Bulk Approve ({selectedCount})
-                    </button>
-                  )}
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {selectedUnapprovedCount > 0 && (
+                      <button 
+                        className="btn btn-primary" 
+                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', background: 'var(--ieee-blue)' }}
+                        onClick={bulkApproveCertificates}
+                        disabled={saving}
+                      >
+                        Bulk Approve ({selectedUnapprovedCount})
+                      </button>
+                    )}
+                    {selectedApprovedCount > 0 && (
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                        onClick={bulkRevertCertificates}
+                        disabled={saving}
+                      >
+                        Bulk Revert ({selectedApprovedCount})
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1024,14 +1086,12 @@ export default function AdminDashboard() {
                   return (
                     <div key={student.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        {!isApprovedByAdmin && (
-                          <input 
-                            type="checkbox" 
-                            checked={!!selectedForCert[student.id]} 
-                            onChange={(e) => setSelectedForCert({ ...selectedForCert, [student.id]: e.target.checked })}
-                            style={{ width: 'auto', cursor: 'pointer' }}
-                          />
-                        )}
+                        <input 
+                          type="checkbox" 
+                          checked={!!selectedForCert[student.id]} 
+                          onChange={(e) => setSelectedForCert({ ...selectedForCert, [student.id]: e.target.checked })}
+                          style={{ width: 'auto', cursor: 'pointer' }}
+                        />
                         <div>
                           <strong style={{ fontSize: '0.9rem' }}>{student.full_name}</strong>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Group: {student.group_id}</div>
@@ -1040,14 +1100,22 @@ export default function AdminDashboard() {
                       
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         {isApprovedByAdmin ? (
-                          <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span className="badge badge-success">Admin Approved</span>
                             {isApprovedByMentor ? (
                               <span className="badge badge-success" style={{ background: 'var(--success)', color: 'white' }}>Mentor Approved</span>
                             ) : (
                               <span className="badge badge-warning">Awaiting Mentor</span>
                             )}
-                          </>
+                            <button 
+                              className="btn btn-outline" 
+                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                              onClick={() => revertInternshipApproval(student.id)}
+                              disabled={saving}
+                            >
+                              Revert
+                            </button>
+                          </div>
                         ) : (
                           <button 
                             className="btn btn-secondary" 

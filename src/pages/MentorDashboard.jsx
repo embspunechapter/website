@@ -368,6 +368,30 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
     }
   };
 
+  const revertMentorCertificate = async (studentId, groupId) => {
+    if (!window.confirm('Revert your approval for this certificate? The certificate will return to "Awaiting Mentor Signature".')) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('certificates')
+        .update({ 
+          mentor_approved: false,
+          mentor_approved_by: null,
+          mentor_approved_at: null
+        })
+        .eq('student_id', studentId)
+        .eq('group_id', groupId);
+      if (error) throw error;
+
+      await load();
+      tell('Mentor approval reverted successfully.');
+    } catch (err) {
+      tell(`Failed to revert approval: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const logMeeting = async (e) => {
     e.preventDefault();
     if (!newMeeting.group_id) return;
@@ -565,7 +589,17 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                           {!cert || !isApprovedByAdmin ? (
                             <span className="badge badge-warning">Awaiting Coordinator Approval</span>
                           ) : isApprovedByMentor ? (
-                            <span className="badge badge-success">Completed & Certified</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span className="badge badge-success">Completed & Certified</span>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                                onClick={() => revertMentorCertificate(member.id, selectedGroup)}
+                                disabled={saving}
+                              >
+                                Revert
+                              </button>
+                            </div>
                           ) : (
                             <button 
                               className="btn btn-primary" 
