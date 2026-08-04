@@ -139,14 +139,36 @@ export default function AdminDashboard() {
         return;
       }
 
+      // Delete notifications for targeted profiles first
+      await supabase
+        .from('notifications')
+        .delete()
+        .in('user_id', idsToDelete);
+
       if (role === 'mentor') {
-        // Disassign mentor from groups first
+        // Disassign mentor from groups
         await supabase
           .from('groups')
           .update({ mentor_id: null })
           .in('mentor_id', idsToDelete);
+
+        // Clear mentor signatures in certificates table
+        await supabase
+          .from('certificates')
+          .update({
+            mentor_approved: false,
+            mentor_approved_by: null,
+            mentor_approved_at: null
+          })
+          .in('mentor_approved_by', idsToDelete);
+
+        // Clear mentor reference in meetings table
+        await supabase
+          .from('meetings')
+          .update({ mentor_id: null })
+          .in('mentor_id', idsToDelete);
       } else if (role === 'student') {
-        // Delete student certificates and reports first to prevent foreign key errors
+        // Delete student certificates and reports
         await supabase
           .from('certificates')
           .delete()
@@ -170,8 +192,8 @@ export default function AdminDashboard() {
       setSelectedMembers({});
       showNotice(`Successfully deleted ${idsToDelete.length} ${role}(s).`);
     } catch (error) {
-      console.error(error);
-      showNotice(`Failed to delete profiles: ${error.message}`);
+      console.error('Delete error details:', error);
+      showNotice(`Failed to delete profiles: ${error.message || error}`);
     } finally {
       setSaving(false);
     }
