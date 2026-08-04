@@ -20,6 +20,9 @@ export default function AdminDashboard() {
   const [announcements, setAnnouncements] = useState([]);
   const [certificates, setCertificates] = useState([]);
   const [selectedForCert, setSelectedForCert] = useState({}); // student_id -> boolean
+  const [selectedMembers, setSelectedMembers] = useState({});
+  const [managementSearch, setManagementSearch] = useState('');
+  const [manageRole, setManageRole] = useState('student');
   
   // Filtering and Searching
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,14 +97,15 @@ export default function AdminDashboard() {
 
   const savePerson = async (event) => {
     event.preventDefault();
-    if (!person.id || !person.full_name || !person.email) {
-      showNotice('Auth User ID, full name, and email are required.');
+    if (!person.full_name || !person.email) {
+      showNotice('Full name and email are required.');
       return;
     }
+    const finalId = person.id.trim() || crypto.randomUUID();
     setSaving(true);
     try {
       const { error } = await supabase.from('profiles').upsert({
-        id: person.id.trim(),
+        id: finalId,
         full_name: person.full_name.trim(),
         email: person.email.trim().toLowerCase(),
         role: person.role,
@@ -116,6 +120,58 @@ export default function AdminDashboard() {
     } catch (error) {
       console.error('Error saving profile:', error);
       showNotice(`Could not save profile: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteProfiles = async (profileIds, role) => {
+    if (!profileIds || profileIds.length === 0) return;
+    const confirmMsg = `Are you sure you want to delete ${profileIds.length} ${role}(s)? This will remove their profiles and delete related certificates, reports, and group assignments.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setSaving(true);
+    try {
+      const currentAdminId = (await supabase.auth.getUser()).data.user?.id;
+      const idsToDelete = profileIds.filter(id => id !== currentAdminId);
+      if (idsToDelete.length === 0) {
+        showNotice("You cannot delete your own admin account.");
+        return;
+      }
+
+      if (role === 'mentor') {
+        // Disassign mentor from groups first
+        await supabase
+          .from('groups')
+          .update({ mentor_id: null })
+          .in('mentor_id', idsToDelete);
+      } else if (role === 'student') {
+        // Delete student certificates and reports first to prevent foreign key errors
+        await supabase
+          .from('certificates')
+          .delete()
+          .in('student_id', idsToDelete);
+        
+        await supabase
+          .from('reports')
+          .delete()
+          .in('student_id', idsToDelete);
+      }
+
+      // Now delete the profiles
+      const { error } = await supabase
+        .from('profiles')
+        .delete()
+        .in('id', idsToDelete);
+      
+      if (error) throw error;
+
+      await fetchDashboardData();
+      setSelectedMembers({});
+      showNotice(`Successfully deleted ${idsToDelete.length} ${role}(s).`);
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to delete profiles: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -666,8 +722,8 @@ export default function AdminDashboard() {
             <h3 style={{ marginBottom: '1rem' }}><UserPlus size={18} /> Add Mentor / Student</h3>
             <form onSubmit={savePerson} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', alignItems: 'end' }}>
               <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Auth UUID</label>
-                <input required placeholder="User UUID" value={person.id} onChange={(e) => setPerson({ ...person, id: e.target.value })} />
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Auth UUID (optional)</label>
+                <input placeholder="Auto-generated if empty" value={person.id} onChange={(e) => setPerson({ ...person, id: e.target.value })} />
               </div>
               <div>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Full Name</label>
@@ -868,6 +924,161 @@ export default function AdminDashboard() {
                 })
               }
             </div>
+          </div>
+
+          {/* Manage Profiles Section */}
+          <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3>Manage Registered Members</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Search, details preview, and profile removal singly or in bulk.</p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', background: 'var(--bg-primary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                <button 
+                  className="btn" 
+                  type="button"
+                  style={{ 
+                    padding: '0.35rem 0.75rem', 
+                    fontSize: '0.75rem', 
+                    background: manageRole === 'student' ? 'var(--ieee-blue)' : 'transparent',
+                    color: manageRole === 'student' ? 'white' : 'var(--text-primary)',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)'
+                  }} 
+                  onClick={() => { setManageRole('student'); setSelectedMembers({}); }}
+                >
+                  Students ({students.length})
+                </button>
+                <button 
+                  className="btn" 
+                  type="button"
+                  style={{ 
+                    padding: '0.35rem 0.75rem', 
+                    fontSize: '0.75rem', 
+                    background: manageRole === 'mentor' ? 'var(--ieee-blue)' : 'transparent',
+                    color: manageRole === 'mentor' ? 'white' : 'var(--text-primary)',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)'
+                  }} 
+                  onClick={() => { setManageRole('mentor'); setSelectedMembers({}); }}
+                >
+                  Mentors ({mentors.length})
+                </button>
+              </div>
+            </div>
+
+            {/* Filter and Bulk Actions Bar */}
+            {(() => {
+              const list = manageRole === 'student' ? students : mentors;
+              const filteredList = list.filter(m => 
+                normalise(m.full_name).includes(normalise(managementSearch)) || 
+                normalise(m.email).includes(normalise(managementSearch)) ||
+                (m.domain && normalise(m.domain).includes(normalise(managementSearch)))
+              );
+              
+              const selectedCount = Object.keys(selectedMembers).filter(id => selectedMembers[id]).length;
+              const isAllSelected = filteredList.length > 0 && filteredList.every(m => selectedMembers[m.id]);
+
+              return (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <input 
+                      placeholder={`Search ${manageRole}s by name, email, or domain...`}
+                      value={managementSearch}
+                      onChange={(e) => setManagementSearch(e.target.value)}
+                      style={{ maxWidth: '350px' }}
+                    />
+                    
+                    {filteredList.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', margin: 0 }}>
+                          <input 
+                            type="checkbox" 
+                            checked={isAllSelected}
+                            onChange={(e) => {
+                              const nextSelected = {};
+                              if (e.target.checked) {
+                                filteredList.forEach(m => {
+                                  nextSelected[m.id] = true;
+                                });
+                              }
+                              setSelectedMembers(nextSelected);
+                            }}
+                            style={{ width: 'auto' }}
+                          />
+                          Select All
+                        </label>
+                        {selectedCount > 0 && (
+                          <button 
+                            className="btn btn-outline" 
+                            type="button"
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                            onClick={() => {
+                              const ids = Object.keys(selectedMembers).filter(id => selectedMembers[id]);
+                              deleteProfiles(ids, manageRole);
+                            }}
+                            disabled={saving}
+                          >
+                            <Trash2 size={12} style={{ marginRight: '0.35rem' }} /> Delete Selected ({selectedCount})
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Members Grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem', maxHeight: '400px', overflowY: 'auto', padding: '0.25rem' }}>
+                    {filteredList.map(item => {
+                      return (
+                        <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', padding: '0.75rem', background: '#fff', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'start' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={!!selectedMembers[item.id]}
+                              onChange={(e) => setSelectedMembers({ ...selectedMembers, [item.id]: e.target.checked })}
+                              style={{ width: 'auto', marginTop: '0.2rem', cursor: 'pointer' }}
+                            />
+                            <div>
+                              <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{item.full_name}</strong>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{item.email}</div>
+                              {item.domain && (
+                                <div style={{ fontSize: '0.75rem', color: 'var(--ieee-blue)', marginTop: '0.2rem' }}>
+                                  Domain: {item.domain}
+                                </div>
+                              )}
+                              {manageRole === 'student' ? (
+                                <div style={{ fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                                  Group: <span className="badge" style={{ padding: '0.1rem 0.4rem', fontSize: '0.65rem' }}>{item.group_id || 'Unassigned'}</span>
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                                  Capacity: <strong>{groups.filter(g => g.mentor_id === item.id).length}/{item.mentor_capacity || 4}</strong>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <button 
+                            className="btn btn-outline" 
+                            type="button"
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                            onClick={() => deleteProfiles([item.id], manageRole)}
+                            disabled={saving}
+                          >
+                            <Trash2 size={10} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {filteredList.length === 0 && (
+                      <p style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>
+                        No profiles found matching search filters.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
