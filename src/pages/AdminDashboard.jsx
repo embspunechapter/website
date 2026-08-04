@@ -696,7 +696,8 @@ export default function AdminDashboard() {
       .map(m => {
         const assignedCount = groups.filter(g => g.mentor_id === m.id).length;
         const capacity = m.mentor_capacity || 4;
-        const isMatch = m.domain && normalise(m.domain).includes(normalise(groupDomain));
+        const mentorDomains = m.domain ? m.domain.split(',').map(d => d.trim()) : [];
+        const isMatch = mentorDomains.some(d => normalise(d).includes(normalise(groupDomain)) || normalise(groupDomain).includes(normalise(d)));
         return { ...m, assignedCount, capacity, isMatch, score: (isMatch ? 10 : 0) + (capacity - assignedCount) };
       })
       .filter(m => m.assignedCount < m.capacity)
@@ -867,8 +868,14 @@ export default function AdminDashboard() {
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Domain / Problem Statement</label>
-                <input placeholder="Domain" value={person.domain} onChange={(e) => setPerson({ ...person, domain: e.target.value })} />
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  {person.role === 'mentor' ? 'Guided Domains (comma separated)' : 'Domain / Problem Statement'}
+                </label>
+                <input 
+                  placeholder={person.role === 'mentor' ? "E.g. AI, Robotics, IoT" : "E.g. Robotics"} 
+                  value={person.domain} 
+                  onChange={(e) => setPerson({ ...person, domain: e.target.value })} 
+                />
               </div>
               {person.role === 'mentor' && (
                 <div>
@@ -1182,8 +1189,12 @@ export default function AdminDashboard() {
                               <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{item.full_name}</strong>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{item.email}</div>
                               {item.domain && (
-                                <div style={{ fontSize: '0.75rem', color: 'var(--ieee-blue)', marginTop: '0.2rem' }}>
-                                  Domain: {item.domain}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.25rem' }}>
+                                  {item.domain.split(',').map((d, i) => (
+                                    <span key={i} className="badge badge-info" style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem' }}>
+                                      {d.trim()}
+                                    </span>
+                                  ))}
                                 </div>
                               )}
                               {manageRole === 'student' ? (
