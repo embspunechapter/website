@@ -24,9 +24,8 @@ export default function AdminDashboard() {
   const [manageRole, setManageRole] = useState('student');
   const [templates, setTemplates] = useState([]);
   const [newTemplate, setNewTemplate] = useState({ name: '', type: 'report', file: null });
-  const [newCert, setNewCert] = useState({ recipientRole: 'student', recipientId: '', file: null });
+  const [certPreview, setCertPreview] = useState(null);
   const fileInputRef = useRef(null);
-  const certFileInputRef = useRef(null);
   
   // Filtering and Searching
   const [searchQuery, setSearchQuery] = useState('');
@@ -448,64 +447,78 @@ export default function AdminDashboard() {
 
 
 
-  const handleIssueCertificate = async (e) => {
-    e.preventDefault();
-    if (!newCert.recipientId || !newCert.file) {
-      showNotice('Please select a recipient and select the certificate file.');
-      return;
-    }
+  const handleAdminApproveStudent = async (student) => {
     setSaving(true);
     try {
-      const file = newCert.file;
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${crypto.randomUUID()}.${fileExt}`;
-      const filePath = `issued/${fileName}`;
+      const activeCertTemplate = templates.find(t => t.type === 'certificate');
+      if (!activeCertTemplate) {
+        showNotice('No Certificate Format uploaded. Please upload a format of type "Certificate Format" in the Formats tab first.');
+        return;
+      }
+      const adminId = (await supabase.auth.getUser()).data.user?.id;
+      const { error } = await supabase.from('certificates').insert({
+        recipient_id: student.id,
+        recipient_role: 'student',
+        student_id: student.id,
+        group_id: student.group_id,
+        admin_approved: true,
+        admin_approved_by: adminId,
+        admin_approved_at: new Date().toISOString(),
+        mentor_approved: false,
+        file_url: activeCertTemplate.file_url
+      });
+      if (error) throw error;
 
-      // 1. Upload to certificates storage bucket
-      const { error: uploadError } = await supabase.storage
-        .from('certificates')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('certificates')
-        .getPublicUrl(filePath);
-
-      // Find if student is associated with a group to maintain backwards compatibility
-      const selectedPerson = (newCert.recipientRole === 'student' ? students : mentors).find(p => p.id === newCert.recipientId);
-      const groupId = selectedPerson?.group_id || null;
-
-      // 2. Insert record in certificates table
-      const { error: insertError } = await supabase
-        .from('certificates')
-        .insert({
-          recipient_id: newCert.recipientId,
-          recipient_role: newCert.recipientRole,
-          student_id: newCert.recipientRole === 'student' ? newCert.recipientId : null,
-          group_id: groupId,
-          file_url: publicUrl,
-          admin_approved: true,
-          mentor_approved: true
+      // Notify mentor
+      const groupObj = groups.find(g => g.id === student.group_id);
+      if (groupObj?.mentor_id) {
+        await supabase.from('notifications').insert({
+          user_id: groupObj.mentor_id,
+          title: 'Certificate Approval Required',
+          content: `Coordinator has approved completion for ${student.full_name}. Please approve and sign their certificate.`,
+          link: '/mentor'
         });
+      }
 
-      if (insertError) throw insertError;
+      await fetchDashboardData();
+      showNotice(`Approved completion for ${student.full_name}. Awaiting mentor approval.`);
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to approve: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
 
-      // Notify the recipient
+  const handleIssueMentorCertificate = async (mentor) => {
+    setSaving(true);
+    try {
+      const activeCertTemplate = templates.find(t => t.type === 'certificate');
+      if (!activeCertTemplate) {
+        showNotice('No Certificate Format uploaded. Please upload a format of type "Certificate Format" in the Formats tab first.');
+        return;
+      }
+      const adminId = (await supabase.auth.getUser()).data.user?.id;
+      const { error } = await supabase.from('certificates').insert({
+        recipient_id: mentor.id,
+        recipient_role: 'mentor',
+        admin_approved: true,
+        admin_approved_by: adminId,
+        admin_approved_at: new Date().toISOString(),
+        mentor_approved: true,
+        file_url: activeCertTemplate.file_url
+      });
+      if (error) throw error;
+
       await supabase.from('notifications').insert({
-        user_id: newCert.recipientId,
-        title: 'Certificate Issued!',
-        content: `Your official internship completion certificate has been issued by the Coordinator. Download it now from your dashboard!`,
-        link: newCert.recipientRole === 'student' ? '/student' : '/mentor'
+        user_id: mentor.id,
+        title: 'Appreciation Certificate Issued!',
+        content: 'Your official appreciation certificate has been issued by the Coordinator. View and download it on your dashboard.',
+        link: '/mentor'
       });
 
-      setNewCert({ recipientRole: 'student', recipientId: '', file: null });
-      if (certFileInputRef.current) certFileInputRef.current.value = '';
-      
-      // Refresh dashboard
       await fetchDashboardData();
-      showNotice('Certificate issued successfully.');
+      showNotice(`Issued certificate to mentor ${mentor.full_name}.`);
     } catch (error) {
       console.error(error);
       showNotice(`Failed to issue certificate: ${error.message}`);
@@ -514,30 +527,17 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteCertificate = async (cert) => {
-    if (!window.confirm('Are you sure you want to revoke/delete this certificate?')) return;
+  const handleRevertApproval = async (cert) => {
+    if (!window.confirm('Are you sure you want to revert/delete this certificate?')) return;
     setSaving(true);
     try {
-      // Delete file from storage
-      const urlParts = cert.file_url.split('/storage/v1/object/public/certificates/');
-      const filePath = urlParts[1];
-      if (filePath) {
-        await supabase.storage.from('certificates').remove([filePath]);
-      }
-
-      // Delete from database
-      const { error } = await supabase
-        .from('certificates')
-        .delete()
-        .eq('id', cert.id);
-
+      const { error } = await supabase.from('certificates').delete().eq('id', cert.id);
       if (error) throw error;
-
       await fetchDashboardData();
-      showNotice('Certificate deleted successfully.');
+      showNotice('Approval reverted successfully.');
     } catch (error) {
       console.error(error);
-      showNotice(`Failed to delete certificate: ${error.message}`);
+      showNotice(`Failed to revert: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -1327,97 +1327,154 @@ export default function AdminDashboard() {
       )}
 
       {activeTab === 'certificates' && (() => {
-        // Filter out people who already have certificates
-        const studentsWithoutCert = students.filter(s => !certificates.some(c => c.recipient_id === s.id));
-        const mentorsWithoutCert = mentors.filter(m => !certificates.some(c => c.recipient_id === m.id));
-        const selectedList = newCert.recipientRole === 'student' ? studentsWithoutCert : mentorsWithoutCert;
+        const activeCertTemplate = templates.find(t => t.type === 'certificate');
 
         return (
-          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '1.5rem', flexWrap: 'wrap' }}>
+          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.9fr', gap: '1.5rem', flexWrap: 'wrap' }}>
             
-            {/* Issue Certificate Form */}
-            <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
-              <h3>Issue Custom Certificate</h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Upload a custom designed certificate file (PDF/Image) for students or mentors.</p>
+            {/* Left Column: Template Status & Mentor Certificates */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               
-              <form onSubmit={handleIssueCertificate} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Recipient Role</label>
-                  <select 
-                    value={newCert.recipientRole} 
-                    onChange={(e) => setNewCert({ ...newCert, recipientRole: e.target.value, recipientId: '' })}
-                  >
-                    <option value="student">Student / Intern</option>
-                    <option value="mentor">Mentor</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Select Recipient</label>
-                  <select 
-                    required
-                    value={newCert.recipientId} 
-                    onChange={(e) => setNewCert({ ...newCert, recipientId: e.target.value })}
-                  >
-                    <option value="">-- Choose {newCert.recipientRole === 'student' ? 'Student' : 'Mentor'} --</option>
-                    {selectedList.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.full_name} ({p.email}){p.group_id ? ` - Group: ${p.group_id}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Certificate File (PDF or Image)</label>
-                  <input 
-                    ref={certFileInputRef} 
-                    type="file" 
-                    required 
-                    onChange={(e) => setNewCert({ ...newCert, file: e.target.files?.[0] || null })} 
-                    style={{ border: 'none', background: 'transparent', padding: '0.5rem 0' }}
-                  />
-                </div>
-                <button type="submit" className="btn btn-primary" disabled={saving} style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-                  <Upload size={16} /> {saving ? 'Uploading & Issuing...' : 'Issue Certificate'}
-                </button>
-              </form>
-            </div>
-
-            {/* Issued Certificates List */}
-            <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
-              <h3>Issued Certificates ({certificates.length})</h3>
-              <div style={{ display: 'grid', gap: '1rem', marginTop: '1.25rem', maxHeight: '550px', overflowY: 'auto' }}>
-                {certificates.length === 0 ? (
-                  <p style={{ color: 'var(--text-secondary)' }}>No certificates issued yet.</p>
+              {/* Template Background Card */}
+              <div className="glass" style={{ padding: '1.25rem', borderRadius: 'var(--radius-lg)' }}>
+                <h4 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-primary)' }}>Certificate Template Format</h4>
+                {activeCertTemplate ? (
+                  <div style={{ marginTop: '0.75rem', background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--success)', fontWeight: 600 }}>✓ Certificate Format Active</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Name: {activeCertTemplate.name}</div>
+                    <a href={activeCertTemplate.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.7rem', color: 'var(--ieee-blue)', display: 'inline-block', marginTop: '0.5rem', fontWeight: 500 }}>
+                      View Background File →
+                    </a>
+                  </div>
                 ) : (
-                  certificates.map(c => {
-                    const recipient = (c.recipient_role === 'mentor' ? mentors : students).find(p => p.id === c.recipient_id);
+                  <div style={{ marginTop: '0.75rem', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--error)', fontWeight: 600 }}>⚠ Missing Certificate Format</div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0' }}>
+                      Please upload a template of type <strong>"Certificate Format"</strong> in the <strong>Formats</strong> tab first before issuing any certificates.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Mentor Appreciation Certificates */}
+              <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+                <h3>Mentor Certificates</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Issue appreciation certificates directly to active mentors.</p>
+                
+                <div style={{ display: 'grid', gap: '0.75rem', maxHeight: '400px', overflowY: 'auto' }}>
+                  {mentors.map(mentor => {
+                    const cert = certificates.find(c => c.recipient_id === mentor.id && c.recipient_role === 'mentor');
                     return (
-                      <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
+                      <div key={mentor.id} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{recipient?.full_name || 'Deleted Profile'}</strong>
-                          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
-                            <span className={`badge ${c.recipient_role === 'mentor' ? 'badge-success' : 'badge-info'}`}>
-                              {c.recipient_role === 'mentor' ? 'Mentor' : 'Student'}
-                            </span>
-                            <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Issued: {new Date(c.issued_at).toLocaleDateString()}</span>
-                          </div>
+                          <strong style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{mentor.full_name}</strong>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{mentor.email}</div>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                          <a href={c.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}>
-                            View & Download
-                          </a>
-                          <button 
-                            className="btn btn-outline" 
-                            style={{ padding: '0.35rem', color: 'var(--error)', borderColor: 'var(--error)' }}
-                            onClick={() => handleDeleteCertificate(c)}
-                            disabled={saving}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                        <div>
+                          {cert ? (
+                            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem' }}
+                                onClick={() => setCertPreview(cert)}
+                              >
+                                Preview
+                              </button>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.25rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                                onClick={() => handleRevertApproval(cert)}
+                                disabled={saving}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button 
+                              className="btn btn-primary" 
+                              style={{ padding: '0.35rem 0.6rem', fontSize: '0.7rem' }}
+                              disabled={saving || !activeCertTemplate}
+                              onClick={() => handleIssueMentorCertificate(mentor)}
+                            >
+                              Issue
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
-                  })
+                  })}
+                  {mentors.length === 0 && (
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No mentors registered yet.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Intern / Student Completion Approvals */}
+            <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+              <h3>Internship Completion & Certificate Approvals</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+                Approve student completion. Once approved, the assigned group mentor must sign and complete the certificate.
+              </p>
+              
+              <div style={{ display: 'grid', gap: '1rem', maxHeight: '580px', overflowY: 'auto' }}>
+                {students.filter(s => s.group_id).map(student => {
+                  const cert = certificates.find(c => c.recipient_id === student.id && c.recipient_role === 'student');
+                  const isAdminApproved = cert && cert.admin_approved;
+                  const isMentorApproved = cert && cert.mentor_approved;
+                  
+                  return (
+                    <div key={student.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff', flexWrap: 'wrap', gap: '0.75rem' }}>
+                      <div>
+                        <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{student.full_name}</strong>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>Group: <strong>{student.group_id}</strong></div>
+                        <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.35rem' }}>
+                          <span className={`badge ${isAdminApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                            Admin: {isAdminApproved ? 'Approved' : 'Pending'}
+                          </span>
+                          <span className={`badge ${isMentorApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                            Mentor: {isMentorApproved ? 'Approved' : 'Pending'}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        {isAdminApproved ? (
+                          <>
+                            {isMentorApproved && (
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                                onClick={() => setCertPreview(cert)}
+                              >
+                                View Preview
+                              </button>
+                            )}
+                            <button 
+                              className="btn btn-outline" 
+                              style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                              onClick={() => handleRevertApproval(cert)}
+                              disabled={saving}
+                            >
+                              Revert Approval
+                            </button>
+                          </>
+                        ) : (
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem' }}
+                            disabled={saving || !activeCertTemplate}
+                            onClick={() => handleAdminApproveStudent(student)}
+                          >
+                            Approve Completion
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {students.filter(s => s.group_id).length === 0 && (
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No active interns in groups found.</p>
                 )}
               </div>
             </div>
@@ -1509,6 +1566,47 @@ export default function AdminDashboard() {
       )}
 
 
+      {/* Certificate Printing / Preview Overlay Modal */}
+      {certPreview && (() => {
+        const isStudent = certPreview.recipient_role === 'student';
+        const recipientProfile = (isStudent ? students : mentors).find(p => p.id === certPreview.recipient_id);
+        const groupObj = isStudent ? groups.find(g => g.id === certPreview.group_id) : null;
+        
+        return (
+          <div className="certificate-preview-overlay no-print" onClick={() => setCertPreview(null)}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+              <div 
+                className="certificate-sheet custom-bg animate-fade-in" 
+                style={{ backgroundImage: `url(${certPreview.file_url})` }}
+              >
+                {/* Dynamic Overlays */}
+                <div className="cert-overlay-name">
+                  {recipientProfile?.full_name || 'Recipient Name'}
+                </div>
+                
+                {isStudent && (
+                  <div className="cert-overlay-description">
+                    for successfully completing their engineering internship in the domain of <strong style={{ color: 'var(--ieee-blue)' }}>{groupObj?.domain || 'General Engineering'}</strong>.
+                  </div>
+                )}
+                
+                <div className="cert-overlay-code">
+                  Verification Code: {certPreview.certificate_code}
+                </div>
+                
+                <div className="cert-overlay-date">
+                  Date Issued: {new Date(certPreview.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', gap: '0.75rem' }} className="no-print">
+                <button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button>
+                <button className="btn btn-outline" style={{ color: 'white', borderColor: 'white', background: 'rgba(255, 255, 255, 0.1)' }} onClick={() => setCertPreview(null)}>Close Preview</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

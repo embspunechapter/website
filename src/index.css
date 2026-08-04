@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,500&display=swap');
 
 :root {
   /* IEEE EMBS Brand Colors (Upgraded Palette) */
@@ -629,4 +629,66 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1.5rem;
   margin-top: 1.5rem;
+}
+
+/* Custom certificate template styles */
+.certificate-sheet.custom-bg {
+  border: none !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-image: none; /* override default grid pattern */
+}
+
+@media print {
+  .certificate-sheet.custom-bg {
+    border: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+.cert-overlay-name {
+  position: absolute;
+  top: 43%;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 2.6rem;
+  font-weight: 700;
+  font-family: 'Playfair Display', 'Georgia', serif;
+  color: #0f172a;
+  padding: 0 3rem;
+  box-sizing: border-box;
+}
+
+.cert-overlay-description {
+  position: absolute;
+  top: 55%;
+  left: 12%;
+  width: 76%;
+  text-align: center;
+  font-size: 1.15rem;
+  line-height: 1.6;
+  font-family: 'Inter', sans-serif;
+  color: #334155;
+  box-sizing: border-box;
+}
+
+.cert-overlay-code {
+  position: absolute;
+  bottom: 8%;
+  left: 10%;
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: #475569;
+}
+
+.cert-overlay-date {
+  position: absolute;
+  bottom: 8%;
+  right: 10%;
+  font-size: 0.8rem;
+  font-family: 'Inter', sans-serif;
+  color: #475569;
 }

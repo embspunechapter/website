@@ -25,6 +25,7 @@ export default function MentorDashboard() {
   const [certificates, setCertificates] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [myCertificate, setMyCertificate] = useState(null);
+  const [certPreview, setCertPreview] = useState(null);
 
   useEffect(() => {
     const fetchTemplates = async () => {
@@ -355,10 +356,59 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
     } finally {
       setSaving(false);
     }
+  };  const approveMentorCertificate = async (studentId, groupId) => {
+    if (!window.confirm('Approve and sign the completion certificate for this student?')) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('certificates')
+        .update({ 
+          mentor_approved: true,
+          mentor_approved_by: profile.id,
+          mentor_approved_at: new Date().toISOString()
+        })
+        .eq('recipient_id', studentId);
+      if (error) throw error;
+
+      // Notify the student that they can now download their certificate
+      await supabase.from('notifications').insert({
+        user_id: studentId,
+        title: 'Internship Completed & Certified!',
+        content: 'Your internship completion certificate has been fully approved by your mentor. You can now view and print it.',
+        link: '/student'
+      });
+
+      await load();
+      tell('Certificate signed and approved successfully.');
+    } catch (err) {
+      tell(`Failed to approve certificate: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
+  const revertMentorCertificate = async (studentId, groupId) => {
+    if (!window.confirm('Revert your signature/approval for this student?')) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('certificates')
+        .update({ 
+          mentor_approved: false,
+          mentor_approved_by: null,
+          mentor_approved_at: null
+        })
+        .eq('recipient_id', studentId);
+      if (error) throw error;
 
-
+      await load();
+      tell('Mentor approval reverted successfully.');
+    } catch (err) {
+      tell(`Failed to revert approval: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
   const logMeeting = async (e) => {
     e.preventDefault();
     if (!newMeeting.group_id) return;
@@ -481,9 +531,9 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
               </p>
             </div>
           </div>
-          <a href={myCertificate.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ display: 'flex', gap: '0.5rem', textDecoration: 'none' }}>
-            <Award size={16} /> Download Certificate
-          </a>
+          <button onClick={() => setCertPreview(myCertificate)} className="btn btn-primary" style={{ display: 'flex', gap: '0.5rem' }}>
+            <Award size={16} /> View Appreciation Certificate
+          </button>
         </div>
       )}
 
@@ -558,34 +608,59 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                 </div>
               </div>
 
-              {/* Internship Completion & Certificates (Dynamic View) */}
+              {/* Internship Completion & Certificates (2-Stage Approval View) */}
               <div style={{ marginBottom: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
-                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Internship Completion & Issued Certificates</h4>
+                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Internship Completion & Certificate Approvals</h4>
                 <div style={{ display: 'grid', gap: '0.75rem' }}>
                   {groups.find(g => g.id === selectedGroup)?.members.map(member => {
-                    const cert = certificates.find(c => c.recipient_id === member.id);
+                    const cert = certificates.find(c => c.recipient_id === member.id && c.recipient_role === 'student');
+                    const isAdminApproved = cert && cert.admin_approved;
+                    const isMentorApproved = cert && cert.mentor_approved;
+                    
                     return (
                       <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
                         <div>
                           <strong style={{ fontSize: '0.85rem' }}>{member.full_name}</strong>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>({member.email})</span>
+                          <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.25rem' }}>
+                            <span className={`badge ${isAdminApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                              Admin: {isAdminApproved ? 'Approved' : 'Pending'}
+                            </span>
+                            <span className={`badge ${isMentorApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                              Mentor: {isMentorApproved ? 'Approved' : 'Pending'}
+                            </span>
+                          </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          {cert ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <span className="badge badge-success">Completed & Certified</span>
-                              <a 
-                                href={cert.file_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer" 
+                          {!cert || !isAdminApproved ? (
+                            <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>Awaiting Coordinator Approval</span>
+                          ) : isMentorApproved ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                              <button 
                                 className="btn btn-outline" 
-                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', textDecoration: 'none' }}
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem' }}
+                                onClick={() => setCertPreview(cert)}
                               >
-                                View Certificate
-                              </a>
+                                View Preview
+                              </button>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                                onClick={() => revertMentorCertificate(member.id, selectedGroup)}
+                                disabled={saving}
+                              >
+                                Revert Sign
+                              </button>
                             </div>
                           ) : (
-                            <span className="badge badge-warning">Awaiting Certificate Issue</span>
+                            <button 
+                              className="btn btn-primary" 
+                              style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }} 
+                              onClick={() => approveMentorCertificate(member.id, selectedGroup)}
+                              disabled={saving}
+                            >
+                              Approve & Sign Certificate
+                            </button>
                           )}
                         </div>
                       </div>
@@ -1008,6 +1083,61 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
           </div>
         </div>
       )}
+      {/* Certificate Printing / Preview Overlay Modal */}
+      {certPreview && (() => {
+        const isStudent = certPreview.recipient_role === 'student';
+        let recipientName = 'Recipient Name';
+        let domainName = 'General Engineering';
+        if (certPreview.recipient_id === profile.id) {
+          recipientName = profile.full_name;
+        } else if (isStudent) {
+          let foundStudent = null;
+          for (const g of groups) {
+            const s = g.members?.find(m => m.id === certPreview.recipient_id);
+            if (s) {
+              foundStudent = s;
+              domainName = g.domain || 'General Engineering';
+              break;
+            }
+          }
+          recipientName = foundStudent?.full_name || 'Student Intern';
+        }
+
+        return (
+          <div className="certificate-preview-overlay no-print" onClick={() => setCertPreview(null)}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+              <div 
+                className="certificate-sheet custom-bg animate-fade-in" 
+                style={{ backgroundImage: `url(${certPreview.file_url})` }}
+              >
+                {/* Dynamic Overlays */}
+                <div className="cert-overlay-name">
+                  {recipientName}
+                </div>
+                
+                {isStudent && (
+                  <div className="cert-overlay-description">
+                    for successfully completing their engineering internship in the domain of <strong style={{ color: 'var(--ieee-blue)' }}>{domainName}</strong>.
+                  </div>
+                )}
+                
+                <div className="cert-overlay-code">
+                  Verification Code: {certPreview.certificate_code}
+                </div>
+                
+                <div className="cert-overlay-date">
+                  Date Issued: {new Date(certPreview.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', gap: '0.75rem' }} className="no-print">
+                <button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button>
+                <button className="btn btn-outline" style={{ color: 'white', borderColor: 'white', background: 'rgba(255, 255, 255, 0.1)' }} onClick={() => setCertPreview(null)}>Close Preview</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

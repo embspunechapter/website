@@ -20,6 +20,7 @@ export default function StudentDashboard() {
   const [milestones, setMilestones] = useState([]);
   const [queries, setQueries] = useState([]);
   const [certificate, setCertificate] = useState(null);
+  const [showCert, setShowCert] = useState(false);
   const [templates, setTemplates] = useState([]);
 
   useEffect(() => {
@@ -416,21 +417,26 @@ export default function StudentDashboard() {
               </div>
             )}
 
-            {/* Completion Certificate Area (Custom File Download) */}
-            {certificate && (
+            {/* Completion Certificate Area (2-Stage Approval Check) */}
+            {certificate && certificate.admin_approved && certificate.mentor_approved && (
               <div className="glass" style={{ ...card, background: 'linear-gradient(to right bottom, #fff, #f0fdf4)', borderColor: 'var(--success)' }}>
                 <h3 style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Award size={20} /> Internship Completed!</h3>
-                <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Congratulations! Your certificate of internship completion has been issued by the Coordinator.</p>
+                <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Congratulations! Your certificate of internship completion has been issued by IEEE EMBS.</p>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.5rem 0' }}>Code: <strong>{certificate.certificate_code}</strong></div>
-                <a 
-                  href={certificate.file_url} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
+                <button 
                   className="btn btn-primary" 
-                  style={{ width: '100%', marginTop: '0.5rem', background: 'var(--success)', color: 'white', display: 'flex', justifyContent: 'center', gap: '0.5rem', textDecoration: 'none' }}
+                  style={{ width: '100%', marginTop: '0.5rem', background: 'var(--success)', display: 'flex', justifyContent: 'center', gap: '0.5rem' }} 
+                  onClick={() => setShowCert(true)}
                 >
-                  <Award size={16} /> Download Completion Certificate
-                </a>
+                  <Award size={16} /> View & Print Certificate
+                </button>
+              </div>
+            )}
+
+            {certificate && certificate.admin_approved && !certificate.mentor_approved && (
+              <div className="glass" style={{ ...card, background: 'linear-gradient(to right bottom, #fff, #fffbeb)', borderColor: 'var(--warning)' }}>
+                <h3 style={{ color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Award size={20} /> Awaiting Mentor Signature</h3>
+                <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Your internship completion was approved by the Coordinator. Awaiting mentor approval and signature to issue your certificate.</p>
               </div>
             )}
 
@@ -839,6 +845,39 @@ export default function StudentDashboard() {
       )}
 
 
+      {/* Certificate Printing / Preview Overlay Modal */}
+      {certificate && showCert && (
+        <div className="certificate-preview-overlay no-print" onClick={() => setShowCert(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+            <div 
+              className="certificate-sheet custom-bg animate-fade-in" 
+              style={{ backgroundImage: `url(${certificate.file_url})` }}
+            >
+              {/* Dynamic Overlays */}
+              <div className="cert-overlay-name">
+                {profile.full_name}
+              </div>
+              
+              <div className="cert-overlay-description">
+                for successfully completing their engineering internship in the domain of <strong style={{ color: 'var(--ieee-blue)' }}>{group?.domain || 'General Engineering'}</strong>.
+              </div>
+              
+              <div className="cert-overlay-code">
+                Verification Code: {certificate.certificate_code}
+              </div>
+              
+              <div className="cert-overlay-date">
+                Date Issued: {new Date(certificate.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '0.75rem' }} className="no-print">
+              <button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button>
+              <button className="btn btn-outline" style={{ color: 'white', borderColor: 'white', background: 'rgba(255, 255, 255, 0.1)' }} onClick={() => setShowCert(false)}>Close Preview</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
