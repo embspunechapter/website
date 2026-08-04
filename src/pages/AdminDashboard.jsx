@@ -68,7 +68,9 @@ export default function AdminDashboard() {
       if (reportError) throw reportError;
       if (annError) throw annError;
       if (certError) throw certError;
-      if (templateError) throw templateError;
+      if (templateError) {
+        console.warn('Templates table not found, please run migrations:', templateError.message);
+      }
 
       const allProfiles = profiles || [];
       setStudents(allProfiles.filter((profile) => profile.role === 'student'));

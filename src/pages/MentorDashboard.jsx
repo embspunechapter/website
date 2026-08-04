@@ -28,7 +28,11 @@ export default function MentorDashboard() {
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
-        const { data } = await supabase.from('templates').select('*').order('name');
+        const { data, error } = await supabase.from('templates').select('*').order('name');
+        if (error) {
+          console.warn('Templates table not found, please run migrations:', error.message);
+          return;
+        }
         if (data) setTemplates(data);
       } catch (error) {
         console.error('Error fetching templates:', error);
