@@ -26,6 +26,7 @@ export default function MentorDashboard() {
   const [templates, setTemplates] = useState([]);
   const [myCertificate, setMyCertificate] = useState(null);
   const [certPreview, setCertPreview] = useState(null);
+  const [activeConductingMeeting, setActiveConductingMeeting] = useState(null);
 
   useEffect(() => {
     const fetchTemplates = async () => {
@@ -409,35 +410,31 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
       setSaving(false);
     }
   };
-  const logMeeting = async (e) => {
+  const scheduleMeeting = async (e) => {
     e.preventDefault();
     if (!newMeeting.group_id) return;
     setSaving(true);
-
+    
     const groupStudents = groups.find(g => g.id === newMeeting.group_id)?.members || [];
-    const presentList = groupStudents
-      .filter(s => presentStudents[s.id])
-      .map(s => s.full_name)
-      .join(', ') || 'None';
-
     try {
       const { error } = await supabase.from('meetings').insert({
         group_id: newMeeting.group_id,
         mentor_id: profile.id,
         held_at: newMeeting.held_at,
-        notes: newMeeting.notes.trim(),
-        next_actions: newMeeting.next_actions.trim(),
+        notes: newMeeting.notes.trim(), // agenda
+        next_actions: '',
         meeting_link: newMeeting.meeting_link.trim() || null,
-        attendance: presentList
+        attendance: null,
+        status: 'scheduled'
       });
       if (error) throw error;
 
-      // Notify students in the group
+      // Notify students
       for (const s of groupStudents) {
         await supabase.from('notifications').insert({
           user_id: s.id,
-          title: 'New Meeting Logged',
-          content: `Meeting held on ${new Date(newMeeting.held_at).toLocaleDateString()} has been logged. ${newMeeting.meeting_link ? 'Google Meet link attached.' : ''}`,
+          title: 'Mentorship Meeting Scheduled',
+          content: `A mentorship meeting has been scheduled for ${new Date(newMeeting.held_at).toLocaleString()}. ${newMeeting.meeting_link ? 'Meet link attached.' : ''}`,
           link: '/student'
         });
       }
@@ -449,9 +446,53 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
         meeting_link: '',
         held_at: new Date().toISOString().slice(0, 16)
       });
+      await load();
+      tell('Meeting scheduled successfully.');
+    } catch (err) {
+      tell(`Failed to schedule meeting: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const conductMeeting = async (e) => {
+    e.preventDefault();
+    if (!activeConductingMeeting) return;
+    setSaving(true);
+
+    const groupStudents = groups.find(g => g.id === activeConductingMeeting.group_id)?.members || [];
+    const presentList = groupStudents
+      .filter(s => presentStudents[s.id])
+      .map(s => s.full_name)
+      .join(', ') || 'None';
+
+    try {
+      const { error } = await supabase
+        .from('meetings')
+        .update({
+          status: 'conducted',
+          notes: activeConductingMeeting.notes.trim(), // actual discussion
+          next_actions: activeConductingMeeting.next_actions.trim(),
+          attendance: presentList
+        })
+        .eq('id', activeConductingMeeting.id);
+
+      if (error) throw error;
+
+      // Notify students in the group
+      for (const s of groupStudents) {
+        await supabase.from('notifications').insert({
+          user_id: s.id,
+          title: 'Meeting Logged by Mentor',
+          content: `Meeting held on ${new Date(activeConductingMeeting.held_at).toLocaleDateString()} has been logged. Check the agenda and next steps.`,
+          link: '/student'
+        });
+      }
+
+      setActiveConductingMeeting(null);
       setPresentStudents({});
       await load();
-      tell('Meeting logged successfully.');
+      tell('Meeting conducted and logged successfully.');
     } catch (err) {
       tell(`Failed to log meeting: ${err.message}`);
     } finally {
@@ -816,130 +857,139 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
         </section>
       )}
 
-      {activeTab === 'meetings' && (
-        <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr', gap: '1.5rem', alignItems: 'start', flexWrap: 'wrap' }}>
-          {/* Form to log meeting */}
-          <div className="glass" style={card}>
-            <h3>Log Mentorship Meeting</h3>
-            <p style={{ ...muted, marginBottom: '1rem' }}>Record meeting attendance, notes, and actions.</p>
-            <form onSubmit={logMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Group / Team</label>
-                <select 
-                  value={newMeeting.group_id}
-                  onChange={(e) => {
-                    setNewMeeting({ ...newMeeting, group_id: e.target.value });
-                    setPresentStudents({});
-                  }}
-                >
-                  <option value="" disabled>Select Group</option>
-                  {groups.map(g => (
-                    <option key={g.id} value={g.id}>{g.id} - {g.domain}</option>
-                  ))}
-                </select>
-              </div>
+      {activeTab === 'meetings' && (() => {
+        const scheduledMeetings = meetings.filter(m => m.status === 'scheduled');
+        const conductedMeetings = meetings.filter(m => m.status === 'conducted');
 
-              {/* Attendance checklist */}
-              {newMeeting.group_id && (
+        return (
+          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.9fr', gap: '1.5rem', alignItems: 'start', flexWrap: 'wrap' }}>
+            
+            {/* Form to schedule meeting */}
+            <div className="glass" style={card}>
+              <h3>Schedule Mentorship Meeting</h3>
+              <p style={{ ...muted, marginBottom: '1rem' }}>Set up an upcoming meeting with your group/team.</p>
+              <form onSubmit={scheduleMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Attendance Check</label>
-                  <div style={{ background: '#fff', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem', display: 'grid', gap: '0.4rem' }}>
-                    {groups.find(g => g.id === newMeeting.group_id)?.members.map(student => (
-                      <label key={student.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', cursor: 'pointer' }}>
-                        <input 
-                          type="checkbox" 
-                          checked={presentStudents[student.id] || false}
-                          onChange={(e) => setPresentStudents({ ...presentStudents, [student.id]: e.target.checked })}
-                          style={{ width: 'auto' }}
-                        />
-                        {student.full_name}
-                      </label>
-                    ))}
-                    {groups.find(g => g.id === newMeeting.group_id)?.members.length === 0 && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No students in this group yet.</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Held At</label>
-                <input type="datetime-local" value={newMeeting.held_at} onChange={(e) => setNewMeeting({ ...newMeeting, held_at: e.target.value })} />
-              </div>
-              
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Meeting Notes / Discussions</label>
-                <textarea placeholder="Topics discussed, updates, milestones checked..." value={newMeeting.notes} onChange={(e) => setNewMeeting({ ...newMeeting, notes: e.target.value })} />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Next Action Items</label>
-                <textarea placeholder="Tasks assigned to students before next meeting..." value={newMeeting.next_actions} onChange={(e) => setNewMeeting({ ...newMeeting, next_actions: e.target.value })} />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Google Meet Link (Optional)</label>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-                  <input 
-                    type="url" 
-                    placeholder="https://meet.google.com/xxx-yyyy-zzz" 
-                    value={newMeeting.meeting_link} 
-                    onChange={(e) => setNewMeeting({ ...newMeeting, meeting_link: e.target.value })} 
-                  />
-                  <button 
-                    type="button"
-                    className="btn btn-secondary" 
-                    style={{ whiteSpace: 'nowrap', padding: '0.5rem 1rem' }} 
-                    onClick={() => {
-                      const chars = 'abcdefghijklmnopqrstuvwxyz';
-                      const randPart = (len) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-                      const link = `https://meet.google.com/${randPart(3)}-${randPart(4)}-${randPart(3)}`;
-                      setNewMeeting({ ...newMeeting, meeting_link: link });
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Group / Team</label>
+                  <select 
+                    value={newMeeting.group_id}
+                    required
+                    onChange={(e) => {
+                      setNewMeeting({ ...newMeeting, group_id: e.target.value });
                     }}
                   >
-                    Generate Meet Link
-                  </button>
+                    <option value="" disabled>Select Group</option>
+                    {groups.map(g => (
+                      <option key={g.id} value={g.id}>{g.id} - {g.domain}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Scheduled Time</label>
+                  <input type="datetime-local" required value={newMeeting.held_at} onChange={(e) => setNewMeeting({ ...newMeeting, held_at: e.target.value })} />
+                </div>
+                
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Meeting Agenda / Topic</label>
+                  <textarea placeholder="Agenda, topics to cover, goals of the meeting..." required value={newMeeting.notes} onChange={(e) => setNewMeeting({ ...newMeeting, notes: e.target.value })} style={{ minHeight: '80px' }} />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Google Meet Link (Optional)</label>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                    <input 
+                      type="url" 
+                      placeholder="https://meet.google.com/xxx-yyyy-zzz" 
+                      value={newMeeting.meeting_link} 
+                      onChange={(e) => setNewMeeting({ ...newMeeting, meeting_link: e.target.value })} 
+                    />
+                    <button 
+                      type="button"
+                      className="btn btn-secondary" 
+                      style={{ whiteSpace: 'nowrap', padding: '0.5rem 1rem' }} 
+                      onClick={() => {
+                        const chars = 'abcdefghijklmnopqrstuvwxyz';
+                        const randPart = (len) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+                        const link = `https://meet.google.com/${randPart(3)}-${randPart(4)}-${randPart(3)}`;
+                        setNewMeeting({ ...newMeeting, meeting_link: link });
+                      }}
+                    >
+                      Generate
+                    </button>
+                  </div>
+                </div>
+
+                <button className="btn btn-primary" disabled={saving || !newMeeting.group_id}>Schedule Meeting</button>
+              </form>
+            </div>
+
+            {/* Meetings Lists */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              
+              {/* Upcoming Scheduled Meetings */}
+              <div className="glass" style={card}>
+                <h3>Scheduled Meetings ({scheduledMeetings.length})</h3>
+                <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem', maxHeight: '350px', overflowY: 'auto' }}>
+                  {scheduledMeetings.length === 0 ? <p style={muted}>No upcoming meetings scheduled.</p> : 
+                    scheduledMeetings.map(m => (
+                      <article key={m.id} style={{ padding: '1rem', border: '1px solid rgba(0, 98, 155, 0.15)', borderRadius: 'var(--radius-md)', background: 'linear-gradient(to right bottom, #fff, rgba(0, 98, 155, 0.01))', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                        <div style={{ flex: 1, minWidth: '240px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ color: 'var(--ieee-blue)' }}>{m.group_id} Meeting</strong>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{new Date(m.held_at).toLocaleString()}</span>
+                          </div>
+                          <p style={{ fontSize: '0.85rem', margin: '0.5rem 0' }}><strong>Agenda:</strong> {m.notes}</p>
+                          {m.meeting_link && (
+                            <a href={m.meeting_link} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: '#0f9d58', border: 'none', color: 'white', textDecoration: 'none', borderRadius: '4px', fontWeight: 600, width: 'fit-content' }}>
+                              Join Google Meet
+                            </a>
+                          )}
+                        </div>
+                        <button 
+                          className="btn btn-secondary animate-pulse-soft" 
+                          style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                          onClick={() => setActiveConductingMeeting({ ...m, notes: '', next_actions: '' })}
+                        >
+                          Conduct & Log Attendance
+                        </button>
+                      </article>
+                    ))
+                  }
                 </div>
               </div>
 
-              <button className="btn btn-primary" disabled={saving || !newMeeting.group_id}>Log Meeting</button>
-            </form>
-          </div>
+              {/* Logged / Conducted Meeting History */}
+              <div className="glass" style={card}>
+                <h3>Conducted Meeting Logs ({conductedMeetings.length})</h3>
+                <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem', maxHeight: '400px', overflowY: 'auto' }}>
+                  {conductedMeetings.length === 0 ? <p style={muted}>No conducted meetings logged yet.</p> : 
+                    conductedMeetings.map(m => (
+                      <article key={m.id} style={{ padding: '1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <strong style={{ color: 'var(--text-primary)' }}>{m.group_id} Logged Meeting</strong>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(m.held_at).toLocaleString()}</span>
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600, margin: '0.2rem 0 0.5rem' }}>
+                          Attendees Check: {m.attendance || 'None'}
+                        </div>
+                        <p style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}><strong>Discussion Notes:</strong> {m.notes}</p>
+                        {m.next_actions && (
+                          <div style={{ padding: '0.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                            <strong>Action Items:</strong> {m.next_actions}
+                          </div>
+                        )}
+                      </article>
+                    ))
+                  }
+                </div>
+              </div>
 
-          {/* List meeting logs history */}
-          <div className="glass" style={card}>
-            <h3>Meeting History</h3>
-            <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem', maxHeight: '550px', overflowY: 'auto' }}>
-              {meetings.length === 0 ? <p style={muted}>No meetings logged yet.</p> : 
-                meetings.map(m => (
-                  <article key={m.id} style={{ padding: '1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ color: 'var(--ieee-blue)' }}>{m.group_id} Meeting</strong>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(m.held_at).toLocaleString()}</span>
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600, margin: '0.2rem 0 0.5rem' }}>
-                      Attendees: {m.attendance || 'None'}
-                    </div>
-                    <p style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}><strong>Discussion:</strong> {m.notes}</p>
-                    {m.meeting_link && (
-                      <div style={{ margin: '0.5rem 0' }}>
-                        <a href={m.meeting_link} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: '#0f9d58', border: 'none', color: 'white', textDecoration: 'none', borderRadius: '4px', fontWeight: 600 }}>
-                          Join Google Meet Room
-                        </a>
-                      </div>
-                    )}
-                    {m.next_actions && (
-                      <div style={{ padding: '0.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}>
-                        <strong>Action Items:</strong> {m.next_actions}
-                      </div>
-                    )}
-                  </article>
-                ))
-              }
             </div>
+
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {activeTab === 'queries' && (
         <section className="glass" style={card}>
@@ -1134,6 +1184,72 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                 <button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button>
                 <button className="btn btn-outline" style={{ color: 'white', borderColor: 'white', background: 'rgba(255, 255, 255, 0.1)' }} onClick={() => setCertPreview(null)}>Close Preview</button>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+      {/* Conduct/Log Meeting Modal Overlay */}
+      {activeConductingMeeting && (() => {
+        const groupStudents = groups.find(g => g.id === activeConductingMeeting.group_id)?.members || [];
+        return (
+          <div className="certificate-preview-overlay no-print" onClick={() => { setActiveConductingMeeting(null); setPresentStudents({}); }}>
+            <div className="glass" style={{ ...card, maxWidth: '500px', width: '90%', padding: '2rem', background: '#fff', display: 'flex', flexDirection: 'column', gap: '1.25rem' }} onClick={(e) => e.stopPropagation()}>
+              <h3 style={{ margin: 0 }}>Log Meeting Attendance & Notes</h3>
+              <p style={{ ...muted, margin: 0 }}>Log details for scheduled meeting of group <strong>{activeConductingMeeting.group_id}</strong>.</p>
+              
+              <form onSubmit={conductMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {/* Attendance check */}
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Attendance Check</label>
+                  <div style={{ background: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.75rem', display: 'grid', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto' }}>
+                    {groupStudents.map(student => (
+                      <label key={student.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}>
+                        <input 
+                          type="checkbox" 
+                          checked={!!presentStudents[student.id]}
+                          onChange={(e) => setPresentStudents({ ...presentStudents, [student.id]: e.target.checked })}
+                          style={{ width: 'auto' }}
+                        />
+                        {student.full_name}
+                      </label>
+                    ))}
+                    {groupStudents.length === 0 && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No students in this group yet.</span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Meeting Discussion / Notes</label>
+                  <textarea 
+                    required
+                    placeholder="Describe what was discussed, progress reviews, questions answered..." 
+                    value={activeConductingMeeting.notes || ''} 
+                    onChange={(e) => setActiveConductingMeeting({ ...activeConductingMeeting, notes: e.target.value })} 
+                    style={{ minHeight: '80px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Next Action Items</label>
+                  <textarea 
+                    required
+                    placeholder="What tasks should the interns work on next?" 
+                    value={activeConductingMeeting.next_actions || ''} 
+                    onChange={(e) => setActiveConductingMeeting({ ...activeConductingMeeting, next_actions: e.target.value })} 
+                    style={{ minHeight: '60px' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                  <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={saving}>
+                    {saving ? 'Saving Log...' : 'Save Conducted Log'}
+                  </button>
+                  <button type="button" className="btn btn-outline" style={{ flex: 1 }} onClick={() => { setActiveConductingMeeting(null); setPresentStudents({}); }}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         );
