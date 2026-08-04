@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { 
   Users, BookOpen, HelpCircle, ClipboardList, Save, UserCheck, Phone, MapPin, Tag, Bell,
-  FileSpreadsheet, FileUp
+  FileSpreadsheet, FileUp, Award
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -24,6 +24,7 @@ export default function MentorDashboard() {
   const [announcements, setAnnouncements] = useState([]);
   const [certificates, setCertificates] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [myCertificate, setMyCertificate] = useState(null);
 
   useEffect(() => {
     const fetchTemplates = async () => {
@@ -82,13 +83,15 @@ export default function MentorDashboard() {
     if (!profile?.id) return;
     setLoading(true);
     try {
-      // 1. Fetch assigned groups and announcements
-      const [{ data: groupData, error: groupError }, { data: annData, error: annError }] = await Promise.all([
+      // 1. Fetch assigned groups, announcements, and own certificate
+      const [{ data: groupData, error: groupError }, { data: annData, error: annError }, { data: myCertData }] = await Promise.all([
         supabase.from('groups').select('*').eq('mentor_id', profile.id),
-        supabase.from('announcements').select('*').order('created_at', { ascending: false })
+        supabase.from('announcements').select('*').order('created_at', { ascending: false }),
+        supabase.from('certificates').select('*').eq('recipient_id', profile.id).maybeSingle()
       ]);
       if (groupError || annError) throw groupError || annError;
       
+      setMyCertificate(myCertData || null);
       setAnnouncements((annData || []).filter(a => a.audience === 'all' || a.audience === 'mentor'));
       const ids = (groupData || []).map((group) => group.id);
       setGroups(groupData || []);
@@ -354,61 +357,7 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
     }
   };
 
-  const approveMentorCertificate = async (studentId, groupId) => {
-    if (!window.confirm('Approve and sign the certificate for this student?')) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from('certificates')
-        .update({ 
-          mentor_approved: true,
-          mentor_approved_by: profile.id,
-          mentor_approved_at: new Date().toISOString()
-        })
-        .eq('student_id', studentId)
-        .eq('group_id', groupId);
-      if (error) throw error;
 
-      // Notify the student that they can now download their certificate
-      await supabase.from('notifications').insert({
-        user_id: studentId,
-        title: 'Internship Completed & Certified!',
-        content: 'Your internship completion certificate has been fully approved by your mentor. You can now download it.',
-        link: '/student'
-      });
-
-      await load();
-      tell('Certificate approved successfully. Student is notified.');
-    } catch (err) {
-      tell(`Failed to approve certificate: ${err.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const revertMentorCertificate = async (studentId, groupId) => {
-    if (!window.confirm('Revert your approval for this certificate? The certificate will return to "Awaiting Mentor Signature".')) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from('certificates')
-        .update({ 
-          mentor_approved: false,
-          mentor_approved_by: null,
-          mentor_approved_at: null
-        })
-        .eq('student_id', studentId)
-        .eq('group_id', groupId);
-      if (error) throw error;
-
-      await load();
-      tell('Mentor approval reverted successfully.');
-    } catch (err) {
-      tell(`Failed to revert approval: ${err.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const logMeeting = async (e) => {
     e.preventDefault();
@@ -519,6 +468,25 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
         </div>
       )}
 
+      {myCertificate && (
+        <div className="glass animate-fade-in animate-float" style={{ ...card, background: 'linear-gradient(135deg, #fff 0%, rgba(0, 98, 155, 0.05) 100%)', borderColor: 'rgba(0, 98, 155, 0.15)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ width: '46px', height: '46px', borderRadius: 'var(--radius-full)', background: 'rgba(245, 158, 11, 0.1)', color: 'var(--warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Award size={26} />
+            </div>
+            <div>
+              <h3 style={{ color: 'var(--ieee-dark-blue)', margin: 0, fontSize: '1.15rem' }}>Appreciation Certificate Issued!</h3>
+              <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Thank you for your valuable guidance and mentorship. Your official appreciation certificate is available for download.
+              </p>
+            </div>
+          </div>
+          <a href={myCertificate.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ display: 'flex', gap: '0.5rem', textDecoration: 'none' }}>
+            <Award size={16} /> Download Certificate
+          </a>
+        </div>
+      )}
+
       {/* Stats row */}
       {activeTab === 'groups' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
@@ -590,14 +558,12 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                 </div>
               </div>
 
-              {/* Internship Completion & Certificates (2-Stage Approval) */}
+              {/* Internship Completion & Certificates (Dynamic View) */}
               <div style={{ marginBottom: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
-                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Internship Completion & Certificate Approvals</h4>
+                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Internship Completion & Issued Certificates</h4>
                 <div style={{ display: 'grid', gap: '0.75rem' }}>
                   {groups.find(g => g.id === selectedGroup)?.members.map(member => {
-                    const cert = certificates.find(c => c.student_id === member.id && c.group_id === selectedGroup);
-                    const isApprovedByAdmin = cert && cert.admin_approved;
-                    const isApprovedByMentor = cert && cert.mentor_approved;
+                    const cert = certificates.find(c => c.recipient_id === member.id);
                     return (
                       <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
                         <div>
@@ -605,29 +571,21 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>({member.email})</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          {!cert || !isApprovedByAdmin ? (
-                            <span className="badge badge-warning">Awaiting Coordinator Approval</span>
-                          ) : isApprovedByMentor ? (
+                          {cert ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                               <span className="badge badge-success">Completed & Certified</span>
-                              <button 
+                              <a 
+                                href={cert.file_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
                                 className="btn btn-outline" 
-                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem', color: 'var(--error)', borderColor: 'var(--error)' }}
-                                onClick={() => revertMentorCertificate(member.id, selectedGroup)}
-                                disabled={saving}
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', textDecoration: 'none' }}
                               >
-                                Revert
-                              </button>
+                                View Certificate
+                              </a>
                             </div>
                           ) : (
-                            <button 
-                              className="btn btn-primary" 
-                              style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }} 
-                              onClick={() => approveMentorCertificate(member.id, selectedGroup)}
-                              disabled={saving}
-                            >
-                              Approve Certificate
-                            </button>
+                            <span className="badge badge-warning">Awaiting Certificate Issue</span>
                           )}
                         </div>
                       </div>

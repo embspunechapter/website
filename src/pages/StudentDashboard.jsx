@@ -20,7 +20,6 @@ export default function StudentDashboard() {
   const [milestones, setMilestones] = useState([]);
   const [queries, setQueries] = useState([]);
   const [certificate, setCertificate] = useState(null);
-  const [showCert, setShowCert] = useState(false);
   const [templates, setTemplates] = useState([]);
 
   useEffect(() => {
@@ -93,7 +92,7 @@ export default function StudentDashboard() {
         supabase.from('meetings').select('*').eq('group_id', profile.group_id).order('held_at', { ascending: false }),
         supabase.from('queries').select('*').eq('group_id', profile.group_id).order('created_at', { ascending: false }),
         supabase.from('milestones').select('*').eq('group_id', profile.group_id).order('due_date', { ascending: true }),
-        supabase.from('certificates').select('*').eq('student_id', profile.id).maybeSingle()
+        supabase.from('certificates').select('*').eq('recipient_id', profile.id).maybeSingle()
       ]);
 
       if (groupError) throw groupError;
@@ -417,22 +416,21 @@ export default function StudentDashboard() {
               </div>
             )}
 
-            {/* Completion Certificate Area (2-Stage Approval Check) */}
-            {certificate && certificate.admin_approved && certificate.mentor_approved && (
+            {/* Completion Certificate Area (Custom File Download) */}
+            {certificate && (
               <div className="glass" style={{ ...card, background: 'linear-gradient(to right bottom, #fff, #f0fdf4)', borderColor: 'var(--success)' }}>
                 <h3 style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Award size={20} /> Internship Completed!</h3>
-                <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Congratulations! Your certificate of internship completion has been issued by IEEE EMBS.</p>
+                <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Congratulations! Your certificate of internship completion has been issued by the Coordinator.</p>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.5rem 0' }}>Code: <strong>{certificate.certificate_code}</strong></div>
-                <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem', background: 'var(--success)' }} onClick={() => setShowCert(true)}>
-                  View & Print Certificate
-                </button>
-              </div>
-            )}
-
-            {certificate && certificate.admin_approved && !certificate.mentor_approved && (
-              <div className="glass" style={{ ...card, background: 'linear-gradient(to right bottom, #fff, #fffbeb)', borderColor: 'var(--warning)' }}>
-                <h3 style={{ color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={20} /> Awaiting Mentor Signature</h3>
-                <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Your internship completion was approved by the Coordinator. Awaiting mentor approval and signature to issue your certificate.</p>
+                <a 
+                  href={certificate.file_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="btn btn-primary" 
+                  style={{ width: '100%', marginTop: '0.5rem', background: 'var(--success)', color: 'white', display: 'flex', justifyContent: 'center', gap: '0.5rem', textDecoration: 'none' }}
+                >
+                  <Award size={16} /> Download Completion Certificate
+                </a>
               </div>
             )}
 
@@ -840,53 +838,7 @@ export default function StudentDashboard() {
         </div>
       )}
 
-      {/* Certificate Printing Layout Overlay */}
-      {certificate && showCert && (
-        <div className="certificate-preview-overlay">
-          <div className="certificate-sheet">
-            <div>
-              <h1 style={{ fontSize: '2.2rem', color: 'var(--ieee-blue)', letterSpacing: '2px' }}>IEEE EMBS</h1>
-              <h4 style={{ fontSize: '0.85rem', color: 'var(--ieee-purple)', letterSpacing: '3px', marginTop: '0.2rem' }}>PUNE CHAPTER</h4>
-            </div>
 
-            <div style={{ margin: '1rem 0' }}>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: '1.8rem', fontStyle: 'italic', fontWeight: 500, color: 'var(--text-secondary)' }}>Certificate of Completion</h2>
-              <p style={{ margin: '0.5rem 0', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>This is proudly presented to</p>
-              <h1 style={{ fontSize: '2rem', textDecoration: 'underline', color: 'var(--ieee-dark-blue)' }}>{profile.full_name}</h1>
-              <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>for successfully completing their engineering internship in the domain of</p>
-              <strong style={{ fontSize: '1.2rem', color: 'var(--ieee-purple)' }}>{group?.domain || 'General Domain'}</strong>
-              <p style={{ margin: '0.5rem 0', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>conducted by IEEE Engineering in Medicine and Biology Society (EMBS) Pune Chapter.</p>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', padding: '0 2rem', alignItems: 'flex-end' }}>
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ width: '120px', borderBottom: '1px solid var(--text-secondary)', marginBottom: '0.3rem' }}></div>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>Program Coordinator</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>IEEE EMBS Pune Chapter</span>
-              </div>
-              <div style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                <div>Date Issued: {new Date(certificate.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-                <div style={{ fontWeight: 600 }}>Verification Code: {certificate.certificate_code}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ width: '120px', borderBottom: '1px solid var(--text-secondary)', marginBottom: '0.3rem' }}></div>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>Chapter Chair</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>IEEE EMBS Pune Chapter</span>
-              </div>
-            </div>
-            
-            <div className="certificate-seal">
-              <div style={{ width: '50px', height: '50px', borderRadius: '50%', border: '4px double var(--ieee-purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ieee-purple)', fontWeight: 'bold', fontSize: '0.65rem' }}>
-                SEAL
-              </div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }} className="no-print">
-            <button className="btn btn-primary" style={{ background: 'var(--success)' }} onClick={() => window.print()}>Print / Download PDF</button>
-            <button className="btn btn-outline" onClick={() => setShowCert(false)}>Close Preview</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

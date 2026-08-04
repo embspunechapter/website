@@ -19,13 +19,14 @@ export default function AdminDashboard() {
   const [reports, setReports] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [certificates, setCertificates] = useState([]);
-  const [selectedForCert, setSelectedForCert] = useState({}); // student_id -> boolean
   const [selectedMembers, setSelectedMembers] = useState({});
   const [managementSearch, setManagementSearch] = useState('');
   const [manageRole, setManageRole] = useState('student');
   const [templates, setTemplates] = useState([]);
   const [newTemplate, setNewTemplate] = useState({ name: '', type: 'report', file: null });
+  const [newCert, setNewCert] = useState({ recipientRole: 'student', recipientId: '', file: null });
   const fileInputRef = useRef(null);
+  const certFileInputRef = useRef(null);
   
   // Filtering and Searching
   const [searchQuery, setSearchQuery] = useState('');
@@ -445,135 +446,98 @@ export default function AdminDashboard() {
     }
   };
 
-  const markInternshipCompleted = async (studentId, groupId) => {
-    if (!window.confirm('Approve internship completion for this student?')) return;
-    setSaving(true);
-    try {
-      const adminId = (await supabase.auth.getUser()).data.user?.id;
-      const { error } = await supabase.from('certificates').upsert({
-        student_id: studentId,
-        group_id: groupId,
-        admin_approved: true,
-        admin_approved_by: adminId,
-        admin_approved_at: new Date().toISOString()
-      }, { onConflict: 'group_id,student_id' });
-      if (error) throw error;
 
-      // Notify the mentor that their approval is needed
-      const mentorId = groups.find(g => g.id === groupId)?.mentor_id;
-      if (mentorId) {
-        await supabase.from('notifications').insert({
-          user_id: mentorId,
-          title: 'Certificate Approval Required',
-          content: `Coordinator has approved completion for student in group ${groupId}. Your approval is required to issue the certificate.`,
-          link: '/mentor'
-        });
-      }
 
-      await fetchDashboardData();
-      showNotice('Admin approval registered. Awaiting Mentor approval.');
-    } catch (error) {
-      console.error(error);
-      showNotice(`Failed to register approval: ${error.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const bulkApproveCertificates = async () => {
-    const studentIds = Object.keys(selectedForCert).filter(id => selectedForCert[id]);
-    if (!studentIds.length) {
-      showNotice('Please select at least one student.');
+  const handleIssueCertificate = async (e) => {
+    e.preventDefault();
+    if (!newCert.recipientId || !newCert.file) {
+      showNotice('Please select a recipient and select the certificate file.');
       return;
     }
-    if (!window.confirm(`Approve internship completion for ${studentIds.length} selected student(s)?`)) return;
     setSaving(true);
     try {
-      const adminId = (await supabase.auth.getUser()).data.user?.id;
-      const rows = studentIds.map(studentId => {
-        const student = students.find(s => s.id === studentId);
-        return {
-          student_id: studentId,
-          group_id: student.group_id,
+      const file = newCert.file;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${crypto.randomUUID()}.${fileExt}`;
+      const filePath = `issued/${fileName}`;
+
+      // 1. Upload to certificates storage bucket
+      const { error: uploadError } = await supabase.storage
+        .from('certificates')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('certificates')
+        .getPublicUrl(filePath);
+
+      // Find if student is associated with a group to maintain backwards compatibility
+      const selectedPerson = (newCert.recipientRole === 'student' ? students : mentors).find(p => p.id === newCert.recipientId);
+      const groupId = selectedPerson?.group_id || null;
+
+      // 2. Insert record in certificates table
+      const { error: insertError } = await supabase
+        .from('certificates')
+        .insert({
+          recipient_id: newCert.recipientId,
+          recipient_role: newCert.recipientRole,
+          student_id: newCert.recipientRole === 'student' ? newCert.recipientId : null,
+          group_id: groupId,
+          file_url: publicUrl,
           admin_approved: true,
-          admin_approved_by: adminId,
-          admin_approved_at: new Date().toISOString()
-        };
-      });
-
-      const { error } = await supabase.from('certificates').upsert(rows, { onConflict: 'group_id,student_id' });
-      if (error) throw error;
-
-      // Notify the mentors that their approval is needed
-      const mentorIdsToNotify = new Set();
-      studentIds.forEach(studentId => {
-        const student = students.find(s => s.id === studentId);
-        const groupObj = groups.find(g => g.id === student.group_id);
-        if (groupObj?.mentor_id) {
-          mentorIdsToNotify.add(groupObj.mentor_id);
-        }
-      });
-
-      for (const mentorId of mentorIdsToNotify) {
-        await supabase.from('notifications').insert({
-          user_id: mentorId,
-          title: 'Certificate Approvals Required',
-          content: 'Coordinator has approved completions. Your approval is required to issue the certificates.',
-          link: '/mentor'
+          mentor_approved: true
         });
+
+      if (insertError) throw insertError;
+
+      // Notify the recipient
+      await supabase.from('notifications').insert({
+        user_id: newCert.recipientId,
+        title: 'Certificate Issued!',
+        content: `Your official internship completion certificate has been issued by the Coordinator. Download it now from your dashboard!`,
+        link: newCert.recipientRole === 'student' ? '/student' : '/mentor'
+      });
+
+      setNewCert({ recipientRole: 'student', recipientId: '', file: null });
+      if (certFileInputRef.current) certFileInputRef.current.value = '';
+      
+      // Refresh dashboard
+      await fetchDashboardData();
+      showNotice('Certificate issued successfully.');
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to issue certificate: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCertificate = async (cert) => {
+    if (!window.confirm('Are you sure you want to revoke/delete this certificate?')) return;
+    setSaving(true);
+    try {
+      // Delete file from storage
+      const urlParts = cert.file_url.split('/storage/v1/object/public/certificates/');
+      const filePath = urlParts[1];
+      if (filePath) {
+        await supabase.storage.from('certificates').remove([filePath]);
       }
 
-      await fetchDashboardData();
-      setSelectedForCert({});
-      showNotice(`Successfully approved completion for ${studentIds.length} students. Mentors notified.`);
-    } catch (error) {
-      console.error(error);
-      showNotice(`Failed to bulk approve: ${error.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const revertInternshipApproval = async (studentId) => {
-    if (!window.confirm('Are you sure you want to revert the completion approval for this student? Both Admin and Mentor approvals will be revoked.')) return;
-    setSaving(true);
-    try {
+      // Delete from database
       const { error } = await supabase
         .from('certificates')
         .delete()
-        .eq('student_id', studentId);
-      if (error) throw error;
-      
-      await fetchDashboardData();
-      showNotice('Approval reverted successfully.');
-    } catch (error) {
-      console.error(error);
-      showNotice(`Failed to revert approval: ${error.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+        .eq('id', cert.id);
 
-  const bulkRevertCertificates = async () => {
-    const studentIds = Object.keys(selectedForCert).filter(id => {
-      return selectedForCert[id] && certificates.some(c => c.student_id === id && c.admin_approved);
-    });
-    if (!studentIds.length) return;
-    if (!window.confirm(`Revoke completion approval for ${studentIds.length} selected student(s)? Both Admin and Mentor approvals will be deleted.`)) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from('certificates')
-        .delete()
-        .in('student_id', studentIds);
       if (error) throw error;
 
       await fetchDashboardData();
-      setSelectedForCert({});
-      showNotice(`Successfully reverted completions for ${studentIds.length} students.`);
+      showNotice('Certificate deleted successfully.');
     } catch (error) {
       console.error(error);
-      showNotice(`Failed to bulk revert: ${error.message}`);
+      showNotice(`Failed to delete certificate: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -697,21 +661,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // Certificate printing
-  const [certToPrint, setCertToPrint] = useState(null);
-  const handlePrintCertificate = (cert) => {
-    const studentInfo = students.find(s => s.id === cert.student_id);
-    const groupInfo = groups.find(g => g.id === cert.group_id);
-    setCertToPrint({
-      code: cert.certificate_code,
-      name: studentInfo?.full_name || 'Student Name',
-      domain: groupInfo?.domain || 'General Domain',
-      date: new Date(cert.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
-    });
-    setTimeout(() => {
-      window.print();
-    }, 300);
-  };
+
 
   // Suggestions for Group Mentor Assignment
   const getSuggestedMentors = (groupDomain) => {
@@ -1377,146 +1327,98 @@ export default function AdminDashboard() {
       )}
 
       {activeTab === 'certificates' && (() => {
-        const unapprovedStudents = students.filter(s => s.group_id && !certificates.some(c => c.student_id === s.id && c.admin_approved));
-        const selectedUnapprovedCount = Object.keys(selectedForCert).filter(id => {
-          return selectedForCert[id] && !certificates.some(c => c.student_id === id && c.admin_approved);
-        }).length;
-        const selectedApprovedCount = Object.keys(selectedForCert).filter(id => {
-          return selectedForCert[id] && certificates.some(c => c.student_id === id && c.admin_approved);
-        }).length;
-        const isAllSelected = unapprovedStudents.length > 0 && unapprovedStudents.every(s => selectedForCert[s.id]);
+        // Filter out people who already have certificates
+        const studentsWithoutCert = students.filter(s => !certificates.some(c => c.recipient_id === s.id));
+        const mentorsWithoutCert = mentors.filter(m => !certificates.some(c => c.recipient_id === m.id));
+        const selectedList = newCert.recipientRole === 'student' ? studentsWithoutCert : mentorsWithoutCert;
 
         return (
-          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem', flexWrap: 'wrap' }}>
+          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '1.5rem', flexWrap: 'wrap' }}>
             
             {/* Issue Certificate Form */}
             <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
-              <h3>Mark Completion & Issue Certificate</h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Only students who have completed all requirements should be issued certificates.</p>
+              <h3>Issue Custom Certificate</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Upload a custom designed certificate file (PDF/Image) for students or mentors.</p>
               
-              {(unapprovedStudents.length > 0 || selectedApprovedCount > 0) && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-primary)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.25rem', border: '1px solid var(--border-color)', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', margin: 0 }}>
-                    <input 
-                      type="checkbox" 
-                      checked={isAllSelected} 
-                      onChange={(e) => {
-                        const nextSelected = {};
-                        if (e.target.checked) {
-                          unapprovedStudents.forEach(s => {
-                            nextSelected[s.id] = true;
-                          });
-                        }
-                        setSelectedForCert(nextSelected);
-                      }}
-                      style={{ width: 'auto' }}
-                    />
-                    Select All Pending ({unapprovedStudents.length})
-                  </label>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    {selectedUnapprovedCount > 0 && (
-                      <button 
-                        className="btn btn-primary" 
-                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', background: 'var(--ieee-blue)' }}
-                        onClick={bulkApproveCertificates}
-                        disabled={saving}
-                      >
-                        Bulk Approve ({selectedUnapprovedCount})
-                      </button>
-                    )}
-                    {selectedApprovedCount > 0 && (
-                      <button 
-                        className="btn btn-outline" 
-                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', color: 'var(--error)', borderColor: 'var(--error)' }}
-                        onClick={bulkRevertCertificates}
-                        disabled={saving}
-                      >
-                        Bulk Revert ({selectedApprovedCount})
-                      </button>
-                    )}
-                  </div>
+              <form onSubmit={handleIssueCertificate} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Recipient Role</label>
+                  <select 
+                    value={newCert.recipientRole} 
+                    onChange={(e) => setNewCert({ ...newCert, recipientRole: e.target.value, recipientId: '' })}
+                  >
+                    <option value="student">Student / Intern</option>
+                    <option value="mentor">Mentor</option>
+                  </select>
                 </div>
-              )}
-
-              <div style={{ display: 'grid', gap: '1rem' }}>
-                {students.filter(s => s.group_id).map(student => {
-                  const cert = certificates.find(c => c.student_id === student.id);
-                  const isApprovedByAdmin = cert && cert.admin_approved;
-                  const isApprovedByMentor = cert && cert.mentor_approved;
-                  return (
-                    <div key={student.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <input 
-                          type="checkbox" 
-                          checked={!!selectedForCert[student.id]} 
-                          onChange={(e) => setSelectedForCert({ ...selectedForCert, [student.id]: e.target.checked })}
-                          style={{ width: 'auto', cursor: 'pointer' }}
-                        />
-                        <div>
-                          <strong style={{ fontSize: '0.9rem' }}>{student.full_name}</strong>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Group: {student.group_id}</div>
-                        </div>
-                      </div>
-                      
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        {isApprovedByAdmin ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <span className="badge badge-success">Admin Approved</span>
-                            {isApprovedByMentor ? (
-                              <span className="badge badge-success" style={{ background: 'var(--success)', color: 'white' }}>Mentor Approved</span>
-                            ) : (
-                              <span className="badge badge-warning">Awaiting Mentor</span>
-                            )}
-                            <button 
-                              className="btn btn-outline" 
-                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.65rem', color: 'var(--error)', borderColor: 'var(--error)' }}
-                              onClick={() => revertInternshipApproval(student.id)}
-                              disabled={saving}
-                            >
-                              Revert
-                            </button>
-                          </div>
-                        ) : (
-                          <button 
-                            className="btn btn-secondary" 
-                            disabled={saving} 
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem' }}
-                            onClick={() => markInternshipCompleted(student.id, student.group_id)}
-                          >
-                            Approve Internship
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {students.filter(s => s.group_id).length === 0 && (
-                  <p style={{ color: 'var(--text-secondary)' }}>No registered students with active groups found.</p>
-                )}
-              </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Select Recipient</label>
+                  <select 
+                    required
+                    value={newCert.recipientId} 
+                    onChange={(e) => setNewCert({ ...newCert, recipientId: e.target.value })}
+                  >
+                    <option value="">-- Choose {newCert.recipientRole === 'student' ? 'Student' : 'Mentor'} --</option>
+                    {selectedList.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.full_name} ({p.email}){p.group_id ? ` - Group: ${p.group_id}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Certificate File (PDF or Image)</label>
+                  <input 
+                    ref={certFileInputRef} 
+                    type="file" 
+                    required 
+                    onChange={(e) => setNewCert({ ...newCert, file: e.target.files?.[0] || null })} 
+                    style={{ border: 'none', background: 'transparent', padding: '0.5rem 0' }}
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={saving} style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                  <Upload size={16} /> {saving ? 'Uploading & Issuing...' : 'Issue Certificate'}
+                </button>
+              </form>
             </div>
 
-            {/* Issued Certificates Overview */}
+            {/* Issued Certificates List */}
             <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
-              <h3>Issued Certificates ({certificates.filter(c => c.admin_approved && c.mentor_approved).length})</h3>
-              <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem', maxHeight: '500px', overflowY: 'auto' }}>
-                {certificates.filter(c => c.admin_approved && c.mentor_approved).length === 0 ? <p style={{ color: 'var(--text-secondary)' }}>No certificates issued yet.</p> :
-                  certificates.filter(c => c.admin_approved && c.mentor_approved).map(cert => {
-                    const student = students.find(s => s.id === cert.student_id);
+              <h3>Issued Certificates ({certificates.length})</h3>
+              <div style={{ display: 'grid', gap: '1rem', marginTop: '1.25rem', maxHeight: '550px', overflowY: 'auto' }}>
+                {certificates.length === 0 ? (
+                  <p style={{ color: 'var(--text-secondary)' }}>No certificates issued yet.</p>
+                ) : (
+                  certificates.map(c => {
+                    const recipient = (c.recipient_role === 'mentor' ? mentors : students).find(p => p.id === c.recipient_id);
                     return (
-                      <div key={cert.id} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
                         <div>
-                          <strong style={{ fontSize: '0.85rem' }}>{student?.full_name || 'Student'}</strong>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Code: {cert.certificate_code}</div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Issued: {new Date(cert.issued_at).toLocaleDateString()}</div>
+                          <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{recipient?.full_name || 'Deleted Profile'}</strong>
+                          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
+                            <span className={`badge ${c.recipient_role === 'mentor' ? 'badge-success' : 'badge-info'}`}>
+                              {c.recipient_role === 'mentor' ? 'Mentor' : 'Student'}
+                            </span>
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Issued: {new Date(c.issued_at).toLocaleDateString()}</span>
+                          </div>
                         </div>
-                        <button className="btn btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }} onClick={() => handlePrintCertificate(cert)}>
-                          Print / Download
-                        </button>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <a href={c.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}>
+                            View & Download
+                          </a>
+                          <button 
+                            className="btn btn-outline" 
+                            style={{ padding: '0.35rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                            onClick={() => handleDeleteCertificate(c)}
+                            disabled={saving}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })
-                }
+                )}
               </div>
             </div>
           </div>
@@ -1606,50 +1508,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Certificate Printing Layout Overlay */}
-      {certToPrint && (
-        <div className="certificate-preview-overlay no-print" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div className="certificate-sheet">
-            <div>
-              <h1 style={{ fontSize: '2.2rem', color: 'var(--ieee-blue)', letterSpacing: '2px' }}>IEEE EMBS</h1>
-              <h4 style={{ fontSize: '0.85rem', color: 'var(--ieee-purple)', letterSpacing: '3px', marginTop: '0.2rem' }}>PUNE CHAPTER</h4>
-            </div>
 
-            <div style={{ margin: '1rem 0' }}>
-              <h2 style={{ fontFamily: 'Outfit', fontSize: '1.8rem', fontStyle: 'italic', fontWeight: 500, color: 'var(--text-secondary)' }}>Certificate of Completion</h2>
-              <p style={{ margin: '0.5rem 0', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>This is proudly presented to</p>
-              <h1 style={{ fontSize: '2rem', textDecoration: 'underline', color: 'var(--ieee-dark-blue)' }}>{certToPrint.name}</h1>
-              <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>for successfully completing their engineering internship in the domain of</p>
-              <strong style={{ fontSize: '1.2rem', color: 'var(--ieee-purple)' }}>{certToPrint.domain}</strong>
-              <p style={{ margin: '0.5rem 0', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>conducted by IEEE Engineering in Medicine and Biology Society (EMBS) Pune Chapter.</p>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', padding: '0 2rem', alignItems: 'flex-end' }}>
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ width: '120px', borderBottom: '1px solid var(--text-secondary)', marginBottom: '0.3rem' }}></div>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>Program Coordinator</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>IEEE EMBS Pune Chapter</span>
-              </div>
-              <div style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                <div>Date Issued: {certToPrint.date}</div>
-                <div style={{ fontWeight: 600 }}>Verification Code: {certToPrint.code}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ width: '120px', borderBottom: '1px solid var(--text-secondary)', marginBottom: '0.3rem' }}></div>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>Chapter Chair</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>IEEE EMBS Pune Chapter</span>
-              </div>
-            </div>
-            
-            <div className="certificate-seal">
-              <div style={{ width: '50px', height: '50px', borderRadius: '50%', border: '4px double var(--ieee-purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ieee-purple)', fontWeight: 'bold', fontSize: '0.65rem' }}>
-                SEAL
-              </div>
-            </div>
-          </div>
-          <button className="btn btn-primary" onClick={() => setCertToPrint(null)}>Close Preview</button>
-        </div>
-      )}
     </div>
   );
 }
