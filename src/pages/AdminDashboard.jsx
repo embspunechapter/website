@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
+import CertificatePreviewModal from '../components/CertificatePreviewModal';
 
 const fileTypes = '.csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel';
 const emptyPerson = { id: '', full_name: '', email: '', role: 'mentor', domain: '', group_id: '', mentor_capacity: 4 };
@@ -1699,38 +1700,12 @@ export default function AdminDashboard() {
         const groupObj = isStudent ? groups.find(g => g.id === certPreview.group_id) : null;
         
         return (
-          <div className="certificate-preview-overlay no-print" onClick={() => setCertPreview(null)}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-              <div 
-                className="certificate-sheet custom-bg animate-fade-in" 
-                style={{ backgroundImage: `url(${certPreview.file_url})` }}
-              >
-                {/* Dynamic Overlays */}
-                <div className="cert-overlay-name">
-                  {recipientProfile?.full_name || 'Recipient Name'}
-                </div>
-                
-                {isStudent && (
-                  <div className="cert-overlay-description">
-                    for successfully completing their engineering internship in the domain of <strong style={{ color: 'var(--ieee-blue)' }}>{groupObj?.domain || 'General Engineering'}</strong>.
-                  </div>
-                )}
-                
-                <div className="cert-overlay-code">
-                  Verification Code: {certPreview.certificate_code}
-                </div>
-                
-                <div className="cert-overlay-date">
-                  Date Issued: {new Date(certPreview.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
-                </div>
-              </div>
-              
-              <div style={{ display: 'flex', gap: '0.75rem' }} className="no-print">
-                <button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button>
-                <button className="btn btn-outline" style={{ color: 'white', borderColor: 'white', background: 'rgba(255, 255, 255, 0.1)' }} onClick={() => setCertPreview(null)}>Close Preview</button>
-              </div>
-            </div>
-          </div>
+          <CertificatePreviewModal 
+            certificate={certPreview} 
+            recipientName={recipientProfile?.full_name || 'Recipient Name'} 
+            domainName={groupObj?.domain} 
+            onClose={() => setCertPreview(null)} 
+          />
         );
       })()}
     </div>

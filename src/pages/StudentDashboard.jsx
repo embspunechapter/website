@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { supabase } from '../lib/supabase';
+import CertificatePreviewModal from '../components/CertificatePreviewModal';
 
 const card = { padding: '1.5rem', borderRadius: 'var(--radius-lg)' };
 const muted = { color: 'var(--text-secondary)', fontSize: '0.875rem' };
@@ -859,37 +860,13 @@ export default function StudentDashboard() {
 
 
       {/* Certificate Printing / Preview Overlay Modal */}
-      {certificate && showCert && (
-        <div className="certificate-preview-overlay no-print" onClick={() => setShowCert(false)}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-            <div 
-              className="certificate-sheet custom-bg animate-fade-in" 
-              style={{ backgroundImage: `url(${certificate.file_url})` }}
-            >
-              {/* Dynamic Overlays */}
-              <div className="cert-overlay-name">
-                {profile.full_name}
-              </div>
-              
-              <div className="cert-overlay-description">
-                for successfully completing their engineering internship in the domain of <strong style={{ color: 'var(--ieee-blue)' }}>{group?.domain || 'General Engineering'}</strong>.
-              </div>
-              
-              <div className="cert-overlay-code">
-                Verification Code: {certificate.certificate_code}
-              </div>
-              
-              <div className="cert-overlay-date">
-                Date Issued: {new Date(certificate.issued_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
-              </div>
-            </div>
-            
-            <div style={{ display: 'flex', gap: '0.75rem' }} className="no-print">
-              <button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button>
-              <button className="btn btn-outline" style={{ color: 'white', borderColor: 'white', background: 'rgba(255, 255, 255, 0.1)' }} onClick={() => setShowCert(false)}>Close Preview</button>
-            </div>
-          </div>
-        </div>
+      {showCert && (
+        <CertificatePreviewModal 
+          certificate={certificate} 
+          recipientName={profile.full_name} 
+          domainName={group?.domain} 
+          onClose={() => setShowCert(false)} 
+        />
       )}
     </div>
   );

@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/AuthContext';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
+import NotFound from './pages/NotFound';
 import AdminDashboard from './pages/AdminDashboard';
 import StudentDashboard from './pages/StudentDashboard';
 import MentorDashboard from './pages/MentorDashboard';
@@ -11,9 +13,8 @@ const ProtectedRoute = ({ children, allowedRole }) => {
   const { user, profile, loading } = useAuth();
 
   if (loading) return <div style={{ padding: '4rem', textAlign: 'center' }}>Loading...</div>;
-  if (!user || !profile) return <Navigate to="/" replace />;
+  if (!user || !profile) return <Navigate to="/login" replace />;
   if (profile && profile.role !== allowedRole) {
-    // If they are logged in but don't match the role, redirect them to their actual role dashboard
     return <Navigate to={`/${profile.role}`} />;
   }
 
@@ -28,7 +29,8 @@ function App() {
           <Navbar />
           <main className="container container-padding">
             <Routes>
-              <Route path="/" element={<Login />} />
+              <Route path="/" element={<Landing />} />
+              <Route path="/login" element={<Login />} />
               <Route path="/admin/*" element={
                 <ProtectedRoute allowedRole="admin">
                   <AdminDashboard />
@@ -39,12 +41,12 @@ function App() {
                   <StudentDashboard />
                 </ProtectedRoute>
               } />
-              <Route path="*" element={<Navigate to="/" replace />} />
               <Route path="/mentor/*" element={
                 <ProtectedRoute allowedRole="mentor">
                   <MentorDashboard />
                 </ProtectedRoute>
               } />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </main>
         </div>

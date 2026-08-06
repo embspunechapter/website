@@ -107,37 +107,39 @@ export default function Login() {
         </form>
 
         {/* Quick Demo Logins */}
-        <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem', textAlign: 'left' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.75rem' }}>
-            Quick Demo Logins (Click to Autofill):
-          </span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <button 
-              type="button" 
-              onClick={() => { setEmail('admin@embs.org'); setPassword('admin123'); setRole('admin'); }}
-              style={demoBtnStyle}
-            >
-              <span>Admin: <strong>admin@embs.org</strong></span>
-              <span style={{ fontSize: '0.7rem', opacity: 0.75 }}>Pass: admin123</span>
-            </button>
-            <button 
-              type="button" 
-              onClick={() => { setEmail('mentor@embs.org'); setPassword('mentor123'); setRole('mentor'); }}
-              style={demoBtnStyle}
-            >
-              <span>Mentor: <strong>mentor@embs.org</strong></span>
-              <span style={{ fontSize: '0.7rem', opacity: 0.75 }}>Pass: mentor123</span>
-            </button>
-            <button 
-              type="button" 
-              onClick={() => { setEmail('student@embs.org'); setPassword('student123'); setRole('student'); }}
-              style={demoBtnStyle}
-            >
-              <span>Student: <strong>student@embs.org</strong></span>
-              <span style={{ fontSize: '0.75rem', opacity: 0.75 }}>Pass: student123</span>
-            </button>
+        {import.meta.env.DEV && (
+          <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem', textAlign: 'left' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.75rem' }}>
+              Quick Demo Logins (Click to Autofill):
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <button 
+                type="button" 
+                onClick={() => { setEmail('admin@embs.org'); setPassword('admin123'); setRole('admin'); }}
+                style={demoBtnStyle}
+              >
+                <span>Admin: <strong>admin@embs.org</strong></span>
+                <span style={{ fontSize: '0.7rem', opacity: 0.75 }}>Pass: admin123</span>
+              </button>
+              <button 
+                type="button" 
+                onClick={() => { setEmail('mentor@embs.org'); setPassword('mentor123'); setRole('mentor'); }}
+                style={demoBtnStyle}
+              >
+                <span>Mentor: <strong>mentor@embs.org</strong></span>
+                <span style={{ fontSize: '0.7rem', opacity: 0.75 }}>Pass: mentor123</span>
+              </button>
+              <button 
+                type="button" 
+                onClick={() => { setEmail('student@embs.org'); setPassword('student123'); setRole('student'); }}
+                style={demoBtnStyle}
+              >
+                <span>Student: <strong>student@embs.org</strong></span>
+                <span style={{ fontSize: '0.75rem', opacity: 0.75 }}>Pass: student123</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
