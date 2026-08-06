@@ -179,7 +179,7 @@ export default function Login() {
         )}
 
         {/* Quick Demo Logins */}
-        {import.meta.env.DEV && !isForgotPassword && (
+        {!isForgotPassword && (
           <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem', textAlign: 'left' }}>
             <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.75rem' }}>
               Quick Demo Logins (Click to Autofill):
