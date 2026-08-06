@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
 import NotFound from './pages/NotFound';
 import AdminDashboard from './pages/AdminDashboard';
 import StudentDashboard from './pages/StudentDashboard';
@@ -31,6 +32,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Landing />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/admin/*" element={
                 <ProtectedRoute allowedRole="admin">
                   <AdminDashboard />

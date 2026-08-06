@@ -1,9 +1,45 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
+import { supabase } from '../lib/supabase';
 import { ArrowRight, Activity, Award, BookOpen } from 'lucide-react';
 
 export default function Landing() {
   const { user, profile } = useAuth();
+  const [stats, setStats] = useState({
+    activeGroups: '10+',
+    domains: 'Bioinformatics, AI/ML, IoT'
+  });
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const { data: groupData, error } = await supabase
+          .from('groups')
+          .select('domain');
+        
+        if (!error && groupData) {
+          const groupCount = groupData.length;
+          const uniqueDomains = Array.from(
+            new Set(
+              groupData
+                .map(g => g.domain?.trim())
+                .filter(Boolean)
+            )
+          );
+          
+          setStats({
+            activeGroups: groupCount > 0 ? `${groupCount}` : '0',
+            domains: uniqueDomains.length > 0 ? uniqueDomains.slice(0, 4).join(', ') : 'Biomedical Eng.'
+          });
+        }
+      } catch (err) {
+        console.error('Error fetching landing stats:', err);
+      }
+    };
+
+    fetchStats();
+  }, []);
 
   return (
     <div className="animate-fade-in" style={{ padding: '2rem 0 4rem' }}>
@@ -136,8 +172,8 @@ export default function Landing() {
         gap: '1.5rem',
         marginBottom: '4rem'
       }}>
-        <StatCounter label="Active Groups" value="10+" />
-        <StatCounter label="Vetted Domains" value="Bioinformatics, AI/ML, IoT" />
+        <StatCounter label="Active Groups" value={stats.activeGroups} />
+        <StatCounter label="Vetted Domains" value={stats.domains} />
         <StatCounter label="Vetting Stages" value="Double-Tier (Mentor & Admin)" />
       </section>
 
