@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { 
   Users, Settings, FileSpreadsheet, Upload, UserPlus, 
-  Bell, FileText, Award, BarChart3, Trash2, AlertTriangle, Search, Plus
+  Bell, FileText, Award, BarChart3, Trash2, AlertTriangle, Search, Plus, Activity
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
@@ -25,6 +25,7 @@ export default function AdminDashboard() {
   const [templates, setTemplates] = useState([]);
   const [newTemplate, setNewTemplate] = useState({ name: '', type: 'report', file: null });
   const [certPreview, setCertPreview] = useState(null);
+  const [milestonesData, setMilestonesData] = useState([]);
   const fileInputRef = useRef(null);
   
   // Filtering and Searching
@@ -54,13 +55,14 @@ export default function AdminDashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }, { data: templateData, error: templateError }] = await Promise.all([
+      const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }, { data: templateData, error: templateError }, { data: milestoneData, error: milestoneError }] = await Promise.all([
         supabase.from('profiles').select('*').order('full_name'),
         supabase.from('groups').select('*').order('id'),
         supabase.from('reports').select('*').eq('status', 'approved').order('created_at', { ascending: false }),
         supabase.from('announcements').select('*').order('created_at', { ascending: false }),
         supabase.from('certificates').select('*').order('issued_at', { ascending: false }),
-        supabase.from('templates').select('*').order('created_at', { ascending: false })
+        supabase.from('templates').select('*').order('created_at', { ascending: false }),
+        supabase.from('milestones').select('*').order('due_date', { ascending: true })
       ]);
 
       if (profilesError) throw profilesError;
@@ -68,6 +70,7 @@ export default function AdminDashboard() {
       if (reportError) throw reportError;
       if (annError) throw annError;
       if (certError) throw certError;
+      if (milestoneError) throw milestoneError;
       if (templateError) {
         console.warn('Templates table not found, please run migrations:', templateError.message);
       }
@@ -77,6 +80,7 @@ export default function AdminDashboard() {
       setMentors(allProfiles.filter((profile) => profile.role === 'mentor'));
       setAnnouncements(annData || []);
       setCertificates(certData || []);
+      setMilestonesData(milestoneData || []);
       setTemplates(templateData || []);
       
       setGroups((groupData || []).map((group) => ({
@@ -1070,6 +1074,76 @@ export default function AdminDashboard() {
                   );
                 })
               }
+            </div>
+          </div>
+
+          {/* Teams Progress Tracker */}
+          <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+            <h3 style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Activity size={18} style={{ color: 'var(--ieee-blue)' }} /> Group Progress Tracker
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Track milestone roadmap completions, active mentor guidance, and percentage progress for all teams.
+            </p>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
+              {groups.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>No groups imported yet.</p>
+              ) : (
+                groups.map(group => {
+                  const mentor = mentors.find(m => m.id === group.mentor_id);
+                  const mentorName = mentor ? mentor.full_name : 'No Mentor Assigned';
+                  
+                  const groupMilestones = milestonesData.filter(m => m.group_id === group.id);
+                  const totalMilestones = groupMilestones.length;
+                  const approvedMilestones = groupMilestones.filter(m => m.status === 'approved').length;
+                  const percentage = totalMilestones > 0 ? Math.round((approvedMilestones / totalMilestones) * 100) : 0;
+                  
+                  return (
+                    <div key={group.id} style={{ padding: '1.25rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <strong style={{ fontSize: '1.1rem', color: 'var(--ieee-dark-blue)' }}>{group.id}</strong>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>{group.domain}</span>
+                        </div>
+                        <span className="badge badge-info" style={{ fontSize: '0.75rem' }}>{percentage}% Done</span>
+                      </div>
+                      
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        <strong>Assigned Mentor:</strong> <span style={{ color: 'var(--ieee-blue)', fontWeight: 600 }}>{mentorName}</span>
+                      </div>
+                      
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                          <span>Milestones: {approvedMilestones} of {totalMilestones} Approved</span>
+                          <span style={{ fontWeight: 600 }}>{percentage}%</span>
+                        </div>
+                        <div className="progress-container" style={{ height: '6px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${percentage}%`, height: '100%', background: 'var(--ieee-gradient)', borderRadius: '4px' }}></div>
+                        </div>
+                      </div>
+
+                      {totalMilestones > 0 ? (
+                        <details style={{ fontSize: '0.75rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                          <summary style={{ cursor: 'pointer', color: 'var(--ieee-purple)', fontWeight: 600 }}>Show Roadmap Milestones ({totalMilestones})</summary>
+                          <div style={{ display: 'grid', gap: '0.35rem', marginTop: '0.5rem', maxHeight: '150px', overflowY: 'auto', paddingRight: '0.25rem' }}>
+                            {groupMilestones.map((m, idx) => (
+                              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem', background: '#f8fafc', borderRadius: '4px' }}>
+                                <span>{idx + 1}. {m.title}</span>
+                                <span className={`badge ${m.status === 'approved' ? 'badge-success' : m.status === 'submitted' ? 'badge-info' : m.status === 'in_progress' ? 'badge-warning' : 'badge-error'}`} style={{ fontSize: '0.6rem', padding: '0.05rem 0.25rem' }}>
+                                  {m.status.replace('_', ' ')}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>No milestones set by mentor yet.</span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
