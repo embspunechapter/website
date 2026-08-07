@@ -882,7 +882,7 @@ export default function AdminDashboard() {
             role: 'mentor',
             domain
           });
-          rawGroupsList.push({ id, mentorEmail });
+          rawGroupsList.push({ id, mentorEmail, domain });
         }
         
         for (let index = 1; index <= 6; index += 1) {
@@ -962,7 +962,8 @@ export default function AdminDashboard() {
         const mId = mentorEmailToId.get(g.mentorEmail.toLowerCase());
         return {
           id: g.id,
-          mentor_id: mId || null
+          mentor_id: mId || null,
+          domain: g.domain
         };
       });
 
