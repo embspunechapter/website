@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { 
   Users, Settings, FileSpreadsheet, Upload, UserPlus, 
-  Bell, FileText, Award, BarChart3, Trash2, AlertTriangle, Search, Plus, Activity
+  Bell, FileText, Award, BarChart3, Trash2, AlertTriangle, Search, Plus, Activity,
+  BookOpen, Calendar
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
