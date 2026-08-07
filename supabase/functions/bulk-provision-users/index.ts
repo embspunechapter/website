@@ -44,7 +44,9 @@ Deno.serve(async (request) => {
 
     const results = { invited: 0, existing: 0, failed: [] as { email: string; reason: string }[] };
     
-    // Process in batches of 10 to speed up execution and prevent timeouts
+    // Client to query the auth schema directly using service key
+    const authSchemaClient = createClient(supabaseUrl, serviceKey, { db: { schema: 'auth' } });
+
     const batchSize = 10;
     for (let i = 0; i < people.length; i += batchSize) {
       const chunk = people.slice(i, i + batchSize);
@@ -56,6 +58,7 @@ Deno.serve(async (request) => {
           return;
         }
 
+        // 1. Check if profile already exists in public.profiles
         const { data: existingProfile } = await adminClient.from('profiles').select('id, role').eq('email', email).maybeSingle();
         if (existingProfile) {
           results.existing += 1;
@@ -65,21 +68,30 @@ Deno.serve(async (request) => {
           return;
         }
 
+        // 2. Check if auth user already exists in auth.users schema
         let userId = '';
-        const { data: invitation, error: inviteError } = await adminClient.auth.admin.createUser({
-          email,
-          password: role === 'student' ? 'student123' : 'mentor123',
-          email_confirm: true,
-          user_metadata: { full_name: fullName, role }
-        });
-
-        if (inviteError) {
-          results.failed.push({ email, reason: inviteError.message });
-          return;
+        const { data: authUserRecord } = await authSchemaClient.from('users').select('id').eq('email', email).maybeSingle();
+        
+        if (authUserRecord && authUserRecord.id) {
+          userId = authUserRecord.id;
         } else {
-          userId = invitation.user.id;
+          // 3. User does not exist at all, create them (with email_confirm to prevent emails being sent)
+          const { data: invitation, error: inviteError } = await adminClient.auth.admin.createUser({
+            email,
+            password: role === 'student' ? 'student123' : 'mentor123',
+            email_confirm: true,
+            user_metadata: { full_name: fullName, role }
+          });
+
+          if (inviteError) {
+            results.failed.push({ email, reason: inviteError.message });
+            return;
+          } else {
+            userId = invitation.user.id;
+          }
         }
 
+        // 4. Insert public profile
         const { error: profileError } = await adminClient.from('profiles').insert({
           id: userId,
           email,
@@ -98,7 +110,7 @@ Deno.serve(async (request) => {
         });
 
         if (profileError) {
-          results.failed.push({ email, reason: `Account created, but profile failed: ${profileError.message}` });
+          results.failed.push({ email, reason: `Account matched, but profile failed: ${profileError.message}` });
         } else {
           results.invited += 1;
         }
