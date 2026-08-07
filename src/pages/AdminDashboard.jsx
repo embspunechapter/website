@@ -957,6 +957,7 @@ export default function AdminDashboard() {
       let mentorsInvited = 0;
       let mentorsExisting = 0;
       let mentorsFailed = 0;
+      let mentorFailureReason = '';
       if (uniqueMentors.length) {
         const { data: mentorRes, error: mentorErr } = await supabase.functions.invoke('bulk-provision-users', {
           body: { role: 'mentor', people: uniqueMentors, redirectTo: window.location.origin }
@@ -966,6 +967,7 @@ export default function AdminDashboard() {
         mentorsInvited = mentorRes.invited || 0;
         mentorsExisting = mentorRes.existing || 0;
         mentorsFailed = mentorRes.failed?.length || 0;
+        mentorFailureReason = mentorRes.failed?.[0]?.reason || '';
         if (mentorRes.failed?.length) {
           console.warn('Failed mentors:', mentorRes.failed);
         }
@@ -986,6 +988,7 @@ export default function AdminDashboard() {
       let studentsInvited = 0;
       let studentsExisting = 0;
       let studentsFailed = 0;
+      let studentFailureReason = '';
       if (uniqueMembers.length) {
         const { data: studentRes, error: studentErr } = await supabase.functions.invoke('bulk-provision-users', {
           body: { role: 'student', people: uniqueMembers, redirectTo: window.location.origin }
@@ -995,6 +998,7 @@ export default function AdminDashboard() {
         studentsInvited = studentRes.invited || 0;
         studentsExisting = studentRes.existing || 0;
         studentsFailed = studentRes.failed?.length || 0;
+        studentFailureReason = studentRes.failed?.[0]?.reason || '';
         if (studentRes.failed?.length) {
           console.warn('Failed students:', studentRes.failed);
         }
@@ -1035,8 +1039,8 @@ export default function AdminDashboard() {
       showNotice(
         `Team import successful! ` +
         `Created ${uniqueGroups.length} groups. ` +
-        `Mentors: ${mentorsInvited} invited, ${mentorsExisting} matched${mentorsFailed ? `, ${mentorsFailed} failed` : ''}. ` +
-        `Students: ${studentsInvited} invited, ${studentsExisting} linked/matched${studentsFailed ? `, ${studentsFailed} failed` : ''}.`
+        `Mentors: ${mentorsInvited} invited, ${mentorsExisting} matched${mentorsFailed ? `, ${mentorsFailed} failed (${mentorFailureReason})` : ''}. ` +
+        `Students: ${studentsInvited} invited, ${studentsExisting} linked/matched${studentsFailed ? `, ${studentsFailed} failed (${studentFailureReason})` : ''}.`
       );
     } catch (error) {
       console.error('Error importing teams:', error);
