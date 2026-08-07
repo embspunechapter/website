@@ -44,8 +44,19 @@ Deno.serve(async (request) => {
 
     const results = { invited: 0, existing: 0, failed: [] as { email: string; reason: string }[] };
     
-    // Client to query the auth schema directly using service key
-    const authSchemaClient = createClient(supabaseUrl, serviceKey, { db: { schema: 'auth' } });
+    // A prior import may create Auth users before the corresponding profiles.
+    // Use the Auth admin API (not direct auth schema queries) to repair those
+    // accounts when the same sheet is imported again.
+    const { data: authUsersPage, error: authUsersError } = await adminClient.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    if (authUsersError) throw authUsersError;
+    const authUsersByEmail = new Map(
+      (authUsersPage.users || [])
+        .filter((authUser) => authUser.email)
+        .map((authUser) => [authUser.email!.trim().toLowerCase(), authUser.id])
+    );
 
     const batchSize = 10;
     for (let i = 0; i < people.length; i += batchSize) {
@@ -68,12 +79,10 @@ Deno.serve(async (request) => {
           return;
         }
 
-        // 2. Check if auth user already exists in auth.users schema
-        let userId = '';
-        const { data: authUserRecord } = await authSchemaClient.from('users').select('id').eq('email', email).maybeSingle();
-        
-        if (authUserRecord && authUserRecord.id) {
-          userId = authUserRecord.id;
+        // 2. Reuse a pre-existing Auth account if it does not yet have a profile.
+        let userId = authUsersByEmail.get(email) || '';
+        if (userId) {
+          results.existing += 1;
         } else {
           // 3. User does not exist at all, create them (with email_confirm to prevent emails being sent)
           const { data: invitation, error: inviteError } = await adminClient.auth.admin.createUser({
@@ -86,9 +95,9 @@ Deno.serve(async (request) => {
           if (inviteError) {
             results.failed.push({ email, reason: inviteError.message });
             return;
-          } else {
-            userId = invitation.user.id;
           }
+          userId = invitation.user.id;
+          authUsersByEmail.set(email, userId);
         }
 
         // 4. Insert public profile
