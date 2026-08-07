@@ -858,12 +858,32 @@ export default function AdminDashboard() {
       let count = 1;
       const teamMap = new Map();
       const memberAssignments = [];
+      const mentorMap = new Map();
+      const rawGroupsList = [];
+
       rows.forEach((row) => {
         const keys = Object.keys(row);
         const teamKey = findColumn(row, ['teamid', 'team', 'groupid', 'group', 'teamnumber']);
         const domainKey = findColumn(row, ['domain', 'domainfocus', 'track']);
         const id = String(row[teamKey] || `EMBS-TEAM-${count++}`).trim();
-        teamMap.set(id, { id, domain: String(row[domainKey] || 'General').trim() || 'General' });
+        const domain = String(row[domainKey] || 'General').trim() || 'General';
+
+        teamMap.set(id, { id, domain });
+
+        const mentorNameKey = findColumn(row, ['mentorname', 'mentor']);
+        const mentorEmailKey = findColumn(row, ['mentormail', 'mentoremail', 'mentormailid']);
+        const mentorName = String(row[mentorNameKey] || '').trim();
+        const mentorEmail = String(row[mentorEmailKey] || '').trim().toLowerCase();
+
+        if (mentorName && mentorEmail) {
+          mentorMap.set(mentorEmail, {
+            full_name: mentorName,
+            email: mentorEmail,
+            role: 'mentor',
+            domain
+          });
+          rawGroupsList.push({ id, mentorEmail });
+        }
         
         for (let index = 1; index <= 6; index += 1) {
           const idxStr = String(index);
@@ -881,11 +901,21 @@ export default function AdminDashboard() {
             return true;
           });
           if (row[nameKey] && row[emailKey]) {
-            memberAssignments.push({ full_name: String(row[nameKey]).trim(), email: String(row[emailKey]).trim().toLowerCase(), group_id: id });
+            memberAssignments.push({
+              full_name: String(row[nameKey]).trim(),
+              email: String(row[emailKey]).trim().toLowerCase(),
+              role: 'student',
+              group_id: id
+            });
           }
         }
       });
-      setParsedTeams({ groups: [...teamMap.values()], members: memberAssignments });
+      setParsedTeams({
+        groups: [...teamMap.values()],
+        members: memberAssignments,
+        mentors: [...mentorMap.values()],
+        rawGroups: rawGroupsList
+      });
     });
   };
 
@@ -895,30 +925,61 @@ export default function AdminDashboard() {
     try {
       const { error: groupError } = await supabase.from('groups').upsert(parsedTeams.groups, { onConflict: 'id' });
       if (groupError) throw groupError;
-      
-      const emails = parsedTeams.members.map((member) => member.email);
-      const { data: existing, error: profilesError } = await supabase.from('profiles').select('id, email').in('email', emails);
-      if (profilesError) throw profilesError;
-      
-      const emailToId = new Map((existing || []).map((profile) => [profile.email.toLowerCase(), profile.id]));
-      const updates = parsedTeams.members.filter((member) => emailToId.has(member.email)).map((member) => ({
-        id: emailToId.get(member.email),
-        group_id: member.group_id
-      }));
 
-      if (updates.length) {
-        const updatePromises = updates.map(u => 
-          supabase.from('profiles').update({ group_id: u.group_id }).eq('id', u.id)
-        );
-        const results = await Promise.all(updatePromises);
-        const firstError = results.find(r => r.error)?.error;
-        if (firstError) throw firstError;
+      let mentorsInvited = 0;
+      let mentorsExisting = 0;
+      if (parsedTeams.mentors?.length) {
+        const { data: mentorRes, error: mentorErr } = await supabase.functions.invoke('bulk-provision-users', {
+          body: { role: 'mentor', people: parsedTeams.mentors, redirectTo: window.location.origin }
+        });
+        if (mentorErr) throw mentorErr;
+        if (mentorRes?.error) throw new Error(mentorRes.error);
+        mentorsInvited = mentorRes.invited || 0;
+        mentorsExisting = mentorRes.existing || 0;
       }
-      
-      const missing = parsedTeams.members.length - updates.length;
+
+      let studentsInvited = 0;
+      let studentsExisting = 0;
+      if (parsedTeams.members?.length) {
+        const { data: studentRes, error: studentErr } = await supabase.functions.invoke('bulk-provision-users', {
+          body: { role: 'student', people: parsedTeams.members, redirectTo: window.location.origin }
+        });
+        if (studentErr) throw studentErr;
+        if (studentRes?.error) throw new Error(studentRes.error);
+        studentsInvited = studentRes.invited || 0;
+        studentsExisting = studentRes.existing || 0;
+      }
+
+      const { data: allMentors, error: fetchMentorsError } = await supabase
+        .from('profiles')
+        .select('id, email')
+        .eq('role', 'mentor');
+      if (fetchMentorsError) throw fetchMentorsError;
+
+      const mentorEmailToId = new Map(allMentors.map(m => [m.email.toLowerCase(), m.id]));
+
+      const groupUpdates = parsedTeams.rawGroups.map(g => {
+        const mId = mentorEmailToId.get(g.mentorEmail.toLowerCase());
+        return {
+          id: g.id,
+          mentor_id: mId || null
+        };
+      });
+
+      if (groupUpdates.length) {
+        const { error: groupMentorError } = await supabase
+          .from('groups').upsert(groupUpdates, { onConflict: 'id' });
+        if (groupMentorError) throw groupMentorError;
+      }
+
       setParsedTeams(null);
       await fetchDashboardData();
-      showNotice(`Imported ${parsedTeams.groups.length} groups and assigned ${updates.length} registered students.${missing ? ` ${missing} students still need Auth accounts and profiles.` : ''}`);
+      showNotice(
+        `Team import successful! ` +
+        `Created ${parsedTeams.groups.length} groups. ` +
+        `Mentors: ${mentorsInvited} invited, ${mentorsExisting} matched. ` +
+        `Students: ${studentsInvited} invited, ${studentsExisting} linked/matched.`
+      );
     } catch (error) {
       console.error('Error importing teams:', error);
       showNotice(`Team import failed: ${error.message}`);

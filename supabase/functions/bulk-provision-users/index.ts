@@ -48,8 +48,15 @@ Deno.serve(async (request) => {
       const fullName = String(rawPerson.full_name || '').trim();
       if (!email || !fullName) { results.failed.push({ email: email || 'Unknown', reason: 'Missing name or email.' }); continue; }
 
-      const { data: existingProfile } = await adminClient.from('profiles').select('id').eq('email', email).maybeSingle();
-      if (existingProfile) { results.existing += 1; continue; }
+      const { data: existingProfile } = await adminClient.from('profiles').select('id, role').eq('email', email).maybeSingle();
+      if (existingProfile) {
+        results.existing += 1;
+        // If student, link to their imported group
+        if (role === 'student' && rawPerson.group_id) {
+          await adminClient.from('profiles').update({ group_id: rawPerson.group_id }).eq('id', existingProfile.id);
+        }
+        continue;
+      }
 
       const { data: invitation, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
         data: { full_name: fullName, role },
