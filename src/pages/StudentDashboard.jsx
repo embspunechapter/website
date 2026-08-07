@@ -45,6 +45,7 @@ export default function StudentDashboard() {
   const [reportTitle, setReportTitle] = useState('');
   const [reportContent, setReportContent] = useState('');
   const [reportFile, setReportFile] = useState(null);
+  const [weekNumber, setWeekNumber] = useState(1);
   
   // Resubmission Form States
   const [resubmitReportId, setResubmitReportId] = useState(null);
@@ -234,7 +235,8 @@ export default function StudentDashboard() {
         file_url: filePath,
         status: 'submitted',
         due_date: reportDeadline || null,
-        version: 1
+        version: 1,
+        week_number: parseInt(weekNumber)
       });
       if (error) throw error;
 
@@ -307,6 +309,19 @@ export default function StudentDashboard() {
       tell(`Resubmission failed: ${error.message}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleViewMeetingScreenshot = async (filePath) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('meetings')
+        .createSignedUrl(filePath, 3600);
+      if (error) throw error;
+      window.open(data.signedUrl, '_blank');
+    } catch (error) {
+      console.error(error);
+      tell(`Could not load screenshot: ${error.message}`);
     }
   };
 
@@ -573,9 +588,19 @@ export default function StudentDashboard() {
               <h3>Submit Progress Report</h3>
               <p style={muted}>Submit report and file updates to your mentor.</p>
               <form onSubmit={submitReport} style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Report Title</label>
-                  <input required placeholder="E.g., Weekly Report 3, Design Proposal" value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} disabled={!profile.group_id} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Report Title</label>
+                    <input required placeholder="E.g., Weekly Report, Design Proposal" value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} disabled={!profile.group_id} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Week Number</label>
+                    <select value={weekNumber} onChange={(e) => setWeekNumber(e.target.value)} disabled={!profile.group_id}>
+                      {[...Array(12)].map((_, i) => (
+                        <option key={i+1} value={i+1}>Week {i+1}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Summary / Content</label>
@@ -615,7 +640,8 @@ export default function StudentDashboard() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', flexWrap: 'wrap', gap: '0.5rem' }}>
                         <div>
                           <strong style={{ fontSize: '1rem', color: 'var(--ieee-dark-blue)' }}>{report.title}</strong>
-                          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.75rem', marginTop: '0.2rem', alignItems: 'center' }}>
+                            {report.week_number && <span className="badge badge-info" style={{ fontSize: '0.65rem', padding: '0.05rem 0.25rem' }}>Week {report.week_number}</span>}
                             <span>Submitted: {new Date(report.created_at).toLocaleDateString()}</span>
                             <span>· Version {report.version}</span>
                             {isLate && <span className="badge badge-error">Late Submission</span>}
@@ -719,6 +745,17 @@ export default function StudentDashboard() {
                   {meeting.next_actions && (
                     <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}>
                       <strong>Action Items:</strong> {meeting.next_actions}
+                    </div>
+                  )}
+                  {meeting.screenshot_url && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        onClick={() => handleViewMeetingScreenshot(meeting.screenshot_url)}
+                      >
+                        View Meeting Screenshot
+                      </button>
                     </div>
                   )}
                 </article>

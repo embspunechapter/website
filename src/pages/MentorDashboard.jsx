@@ -64,6 +64,7 @@ export default function MentorDashboard() {
     held_at: new Date().toISOString().slice(0, 16)
   });
   const [presentStudents, setPresentStudents] = useState({}); // student_id -> boolean
+  const [meetingScreenshotFile, setMeetingScreenshotFile] = useState(null);
 
   // Review Checklist State
   const [checklist, setChecklist] = useState({
@@ -72,6 +73,14 @@ export default function MentorDashboard() {
     codeVerified: false,
     references: false
   });
+
+  const [mentorMgmtSectionFilter, setMentorMgmtSectionFilter] = useState('');
+  const [mentorMgmtCityFilter, setMentorMgmtCityFilter] = useState('');
+  const [mentorMgmtIeeeFilter, setMentorMgmtIeeeFilter] = useState('');
+  const [mentorMgmtYearFilter, setMentorMgmtYearFilter] = useState('');
+  const [mentorMgmtCollegeFilter, setMentorMgmtCollegeFilter] = useState('');
+  const [mentorMgmtOrgFilter, setMentorMgmtOrgFilter] = useState('');
+  const [mentorMgmtDesignationFilter, setMentorMgmtDesignationFilter] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -411,6 +420,34 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
       setSaving(false);
     }
   };
+
+  const makeTeamLead = async (studentId, groupId) => {
+    if (!window.confirm('Are you sure you want to change the Team Lead to this student?')) return;
+    setSaving(true);
+    try {
+      const { error: resetError } = await supabase
+        .from('profiles')
+        .update({ is_lead: false })
+        .eq('group_id', groupId)
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (resetError) throw resetError;
+
+      const { error: setLeadError } = await supabase
+        .from('profiles')
+        .update({ is_lead: true })
+        .eq('id', studentId);
+      if (setLeadError) throw setLeadError;
+
+      await load();
+      tell('Team Lead assigned successfully.');
+    } catch (error) {
+      console.error(error);
+      tell(`Failed to assign Team Lead: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const scheduleMeeting = async (e) => {
     e.preventDefault();
     if (!newMeeting.group_id) return;
@@ -468,13 +505,24 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
       .join(', ') || 'None';
 
     try {
+      let screenshotPath = null;
+      if (meetingScreenshotFile) {
+        const safeName = meetingScreenshotFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        screenshotPath = `${profile.id}/${activeConductingMeeting.group_id}/${Date.now()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage
+          .from('meetings')
+          .upload(screenshotPath, meetingScreenshotFile);
+        if (uploadError) throw uploadError;
+      }
+
       const { error } = await supabase
         .from('meetings')
         .update({
           status: 'conducted',
           notes: activeConductingMeeting.notes.trim(), // actual discussion
           next_actions: activeConductingMeeting.next_actions.trim(),
-          attendance: presentList
+          attendance: presentList,
+          screenshot_url: screenshotPath
         })
         .eq('id', activeConductingMeeting.id);
 
@@ -492,12 +540,26 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
 
       setActiveConductingMeeting(null);
       setPresentStudents({});
+      setMeetingScreenshotFile(null);
       await load();
       tell('Meeting conducted and logged successfully.');
     } catch (err) {
       tell(`Failed to log meeting: ${err.message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleViewMeetingScreenshot = async (filePath) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('meetings')
+        .createSignedUrl(filePath, 3600);
+      if (error) throw error;
+      window.open(data.signedUrl, '_blank');
+    } catch (error) {
+      console.error(error);
+      tell(`Could not load screenshot: ${error.message}`);
     }
   };
 
@@ -633,22 +695,118 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
               </div>
 
               {/* Student Members List */}
-              <div style={{ marginBottom: '2rem' }}>
-                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Student Members</h4>
-                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                  {groups.find(g => g.id === selectedGroup)?.members.map(member => (
-                    <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--ieee-blue)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem' }}>
-                        {member.full_name.charAt(0)}
+              {(() => {
+                const currentGroupMembers = groups.find(g => g.id === selectedGroup)?.members || [];
+                const allSections = [...new Set(currentGroupMembers.map(p => p.section).filter(Boolean))];
+                const allCities = [...new Set(currentGroupMembers.map(p => p.city).filter(Boolean))];
+                const allYears = [...new Set(currentGroupMembers.map(p => p.graduation_year).filter(Boolean))];
+                const allColleges = [...new Set(currentGroupMembers.map(p => p.college).filter(Boolean))];
+                const allOrgs = [...new Set(currentGroupMembers.map(p => p.organisation).filter(Boolean))];
+                const allDesignations = [...new Set(currentGroupMembers.map(p => p.designation).filter(Boolean))];
+
+                const filteredMembers = currentGroupMembers.filter(m => {
+                  const matchesSection = mentorMgmtSectionFilter ? m.section === mentorMgmtSectionFilter : true;
+                  const matchesCity = mentorMgmtCityFilter ? m.city === mentorMgmtCityFilter : true;
+                  const matchesIeee = mentorMgmtIeeeFilter ? String(m.is_ieee_member) === mentorMgmtIeeeFilter : true;
+                  const matchesYear = mentorMgmtYearFilter ? m.graduation_year === mentorMgmtYearFilter : true;
+                  const matchesCollege = mentorMgmtCollegeFilter ? m.college === mentorMgmtCollegeFilter : true;
+                  const matchesOrg = mentorMgmtOrgFilter ? m.organisation === mentorMgmtOrgFilter : true;
+                  const matchesDesignation = mentorMgmtDesignationFilter ? m.designation === mentorMgmtDesignationFilter : true;
+                  return matchesSection && matchesCity && matchesIeee && matchesYear && matchesCollege && matchesOrg && matchesDesignation;
+                });
+
+                return (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Student Members ({filteredMembers.length})</h4>
+                    
+                    {/* Advanced Filters */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem', marginBottom: '1rem', background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Section</label>
+                        <select value={mentorMgmtSectionFilter} onChange={(e) => setMentorMgmtSectionFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          {allSections.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
                       </div>
-                      <div style={{ fontSize: '0.8rem' }}>
-                        <div style={{ fontWeight: 600 }}>{member.full_name}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{member.email}</div>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>City</label>
+                        <select value={mentorMgmtCityFilter} onChange={(e) => setMentorMgmtCityFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          {allCities.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>IEEE Member</label>
+                        <select value={mentorMgmtIeeeFilter} onChange={(e) => setMentorMgmtIeeeFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          <option value="true">Yes</option>
+                          <option value="false">No</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Grad Year</label>
+                        <select value={mentorMgmtYearFilter} onChange={(e) => setMentorMgmtYearFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          {allYears.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>College</label>
+                        <select value={mentorMgmtCollegeFilter} onChange={(e) => setMentorMgmtCollegeFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          {allColleges.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Org</label>
+                        <select value={mentorMgmtOrgFilter} onChange={(e) => setMentorMgmtOrgFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          {allOrgs.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Designation</label>
+                        <select value={mentorMgmtDesignationFilter} onChange={(e) => setMentorMgmtDesignationFilter(e.target.value)} style={{ padding: '0.25rem', fontSize: '0.7rem' }}>
+                          <option value="">All</option>
+                          {allDesignations.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      {filteredMembers.map(member => (
+                        <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: '#fff', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', minWidth: '220px', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--ieee-blue)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem' }}>
+                              {member.full_name.charAt(0)}
+                            </div>
+                            <div style={{ fontSize: '0.8rem' }}>
+                              <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                {member.full_name}
+                                {member.is_lead && <span style={{ color: 'var(--warning)', fontSize: '0.7rem' }} title="Team Lead">👑 Lead</span>}
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{member.email}</div>
+                            </div>
+                          </div>
+                          {!member.is_lead && (
+                            <button 
+                              className="btn btn-secondary" 
+                              style={{ padding: '0.15rem 0.4rem', fontSize: '0.65rem' }}
+                              onClick={() => makeTeamLead(member.id, selectedGroup)}
+                              disabled={saving}
+                            >
+                              Make Lead
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {filteredMembers.length === 0 && (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>No members match the filters.</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Internship Completion & Certificates (2-Stage Approval View) */}
               <div style={{ marginBottom: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
@@ -773,9 +931,12 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', flexWrap: 'wrap', gap: '1rem' }}>
                 <div>
                   <strong style={{ fontSize: '1.1rem', color: 'var(--ieee-dark-blue)' }}>{report.title}</strong>
-                  <p style={muted}>
-                    Group: <strong>{report.group_id}</strong> · submitted by {report.submitter} · {new Date(report.created_at).toLocaleString()}
-                  </p>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.75rem', marginTop: '0.2rem', alignItems: 'center' }}>
+                    {report.week_number && <span className="badge badge-info" style={{ fontSize: '0.65rem', padding: '0.05rem 0.25rem' }}>Week {report.week_number}</span>}
+                    <span style={muted}>
+                      Group: <strong>{report.group_id}</strong> · submitted by {report.submitter} · {new Date(report.created_at).toLocaleString()}
+                    </span>
+                  </div>
                   {report.due_date && (
                     <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '4px', background: '#fef2f2', color: 'var(--error)', fontWeight: 600, display: 'inline-block', marginTop: '0.25rem' }}>
                       {new Date(report.created_at) > new Date(report.due_date) ? 'Late Submission' : 'On Time'}
@@ -978,6 +1139,17 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                         {m.next_actions && (
                           <div style={{ padding: '0.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
                             <strong>Action Items:</strong> {m.next_actions}
+                          </div>
+                        )}
+                        {m.screenshot_url && (
+                          <div style={{ marginTop: '0.5rem' }}>
+                            <button 
+                              className="btn btn-outline" 
+                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                              onClick={() => handleViewMeetingScreenshot(m.screenshot_url)}
+                            >
+                              View Meeting Screenshot
+                            </button>
                           </div>
                         )}
                       </article>
@@ -1212,6 +1384,16 @@ ${draft.feedback.trim() || 'No additional comments provided.'}`;
                     value={activeConductingMeeting.next_actions || ''} 
                     onChange={(e) => setActiveConductingMeeting({ ...activeConductingMeeting, next_actions: e.target.value })} 
                     style={{ minHeight: '60px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Upload Meeting Screenshot (Image/PDF)</label>
+                  <input 
+                    type="file" 
+                    accept="image/*,application/pdf"
+                    onChange={(e) => setMeetingScreenshotFile(e.target.files?.[0] || null)}
+                    style={{ fontSize: '0.8rem', width: '100%' }}
                   />
                 </div>
 

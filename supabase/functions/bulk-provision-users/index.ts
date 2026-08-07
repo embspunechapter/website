@@ -1,4 +1,4 @@
-﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,6 +10,14 @@ type Person = {
   email: string;
   domain?: string | null;
   group_id?: string | null;
+  mentor_capacity?: number | null;
+  section?: string | null;
+  city?: string | null;
+  is_ieee_member?: boolean;
+  graduation_year?: string | null;
+  college?: string | null;
+  designation?: string | null;
+  organisation?: string | null;
 };
 
 Deno.serve(async (request) => {
@@ -53,9 +61,20 @@ Deno.serve(async (request) => {
       }
 
       const { error: profileError } = await adminClient.from('profiles').insert({
-        id: invitation.user.id, email, full_name: fullName, role,
+        id: invitation.user.id,
+        email,
+        full_name: fullName,
+        role,
         domain: rawPerson.domain || null,
         group_id: role === 'student' ? rawPerson.group_id || null : null,
+        mentor_capacity: role === 'mentor' ? rawPerson.mentor_capacity || 4 : null,
+        section: rawPerson.section || null,
+        city: rawPerson.city || null,
+        is_ieee_member: !!rawPerson.is_ieee_member,
+        graduation_year: rawPerson.graduation_year || null,
+        college: rawPerson.college || null,
+        designation: rawPerson.designation || null,
+        organisation: rawPerson.organisation || null,
       });
       if (profileError) {
         results.failed.push({ email, reason: `Account invited, but profile failed: ${profileError.message}` });

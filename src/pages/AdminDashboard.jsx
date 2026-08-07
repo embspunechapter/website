@@ -10,7 +10,15 @@ import CertificatePreviewModal from '../components/CertificatePreviewModal';
 const fileTypes = '.csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel';
 const emptyPerson = { id: '', full_name: '', email: '', role: 'mentor', domain: '', group_id: '', mentor_capacity: 4 };
 const normalise = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-const findColumn = (row, names) => Object.keys(row).find((key) => names.includes(normalise(key)));
+const findColumn = (row, names) => {
+  if (!row) return undefined;
+  const normalisedKeys = Object.keys(row).map(k => ({ original: k, normalised: normalise(k) }));
+  const exactMatch = normalisedKeys.find(nk => names.includes(nk.normalised));
+  if (exactMatch) return exactMatch.original;
+  const subMatch = normalisedKeys.find(nk => names.some(name => nk.normalised.includes(name)));
+  if (subMatch) return subMatch.original;
+  return undefined;
+};
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('analytics');
@@ -18,6 +26,7 @@ export default function AdminDashboard() {
   const [mentors, setMentors] = useState([]);
   const [groups, setGroups] = useState([]);
   const [reports, setReports] = useState([]);
+  const [meetings, setMeetings] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [certificates, setCertificates] = useState([]);
   const [selectedMembers, setSelectedMembers] = useState({});
@@ -33,11 +42,23 @@ export default function AdminDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [domainFilter, setDomainFilter] = useState('');
+  const [weekFilter, setWeekFilter] = useState('');
+  const [selectedStudentCerts, setSelectedStudentCerts] = useState({});
+  const [mgmtSectionFilter, setMgmtSectionFilter] = useState('');
+  const [mgmtCityFilter, setMgmtCityFilter] = useState('');
+  const [mgmtIeeeFilter, setMgmtIeeeFilter] = useState('');
+  const [mgmtYearFilter, setMgmtYearFilter] = useState('');
+  const [mgmtDomainFilter, setMgmtDomainFilter] = useState('');
+  const [mgmtCollegeFilter, setMgmtCollegeFilter] = useState('');
+  const [mgmtOrgFilter, setMgmtOrgFilter] = useState('');
+  const [mgmtDesignationFilter, setMgmtDesignationFilter] = useState('');
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [person, setPerson] = useState(emptyPerson);
+  const [mergeSource, setMergeSource] = useState('');
+  const [mergeTarget, setMergeTarget] = useState('');
   const [importRole, setImportRole] = useState('mentor');
   const [parsedPeople, setParsedPeople] = useState(null);
   const [parsedTeams, setParsedTeams] = useState(null);
@@ -56,14 +77,15 @@ export default function AdminDashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }, { data: templateData, error: templateError }, { data: milestoneData, error: milestoneError }] = await Promise.all([
+      const [{ data: profiles, error: profilesError }, { data: groupData, error: groupError }, { data: reportData, error: reportError }, { data: annData, error: annError }, { data: certData, error: certError }, { data: templateData, error: templateError }, { data: milestoneData, error: milestoneError }, { data: meetingData, error: meetingError }] = await Promise.all([
         supabase.from('profiles').select('*').order('full_name'),
         supabase.from('groups').select('*').order('id'),
-        supabase.from('reports').select('*').eq('status', 'approved').order('created_at', { ascending: false }),
+        supabase.from('reports').select('*').order('created_at', { ascending: false }),
         supabase.from('announcements').select('*').order('created_at', { ascending: false }),
         supabase.from('certificates').select('*').order('issued_at', { ascending: false }),
         supabase.from('templates').select('*').order('created_at', { ascending: false }),
-        supabase.from('milestones').select('*').order('due_date', { ascending: true })
+        supabase.from('milestones').select('*').order('due_date', { ascending: true }),
+        supabase.from('meetings').select('*').order('held_at', { ascending: false })
       ]);
 
       if (profilesError) throw profilesError;
@@ -72,6 +94,7 @@ export default function AdminDashboard() {
       if (annError) throw annError;
       if (certError) throw certError;
       if (milestoneError) throw milestoneError;
+      if (meetingError) throw meetingError;
       if (templateError) {
         console.warn('Templates table not found, please run migrations:', templateError.message);
       }
@@ -83,6 +106,7 @@ export default function AdminDashboard() {
       setCertificates(certData || []);
       setMilestonesData(milestoneData || []);
       setTemplates(templateData || []);
+      setMeetings(meetingData || []);
       
       setGroups((groupData || []).map((group) => ({
         ...group,
@@ -207,16 +231,36 @@ export default function AdminDashboard() {
     const finalId = person.id.trim() || crypto.randomUUID();
     setSaving(true);
     try {
-      const { error } = await supabase.from('profiles').upsert({
-        id: finalId,
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .or(`id.eq.${finalId},email.eq.${person.email.trim().toLowerCase()}`)
+        .maybeSingle();
+
+      const profilePayload = {
         full_name: person.full_name.trim(),
         email: person.email.trim().toLowerCase(),
         role: person.role,
         domain: person.domain.trim() || null,
         mentor_capacity: person.role === 'mentor' ? parseInt(person.mentor_capacity) || 4 : null,
         group_id: person.role === 'student' ? person.group_id.trim() || null : null,
-      }, { onConflict: 'id' });
-      if (error) throw error;
+      };
+
+      if (existing) {
+        const { error } = await supabase
+          .from('profiles')
+          .update(profilePayload)
+          .eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('profiles')
+          .insert({
+            id: finalId,
+            ...profilePayload
+          });
+        if (error) throw error;
+      }
       setPerson({ ...emptyPerson, role: person.role });
       await fetchDashboardData();
       showNotice(`${person.role === 'mentor' ? 'Mentor' : 'Student'} profile saved successfully.`);
@@ -393,6 +437,32 @@ export default function AdminDashboard() {
     }
   };
 
+  const deleteGroup = async (groupId) => {
+    if (!window.confirm(`Are you sure you want to delete the group "${groupId}"? This will dissolve the group, clear student assignments, and delete all associated meetings, milestones, and reports.`)) return;
+    setSaving(true);
+    try {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ group_id: null, is_lead: false })
+        .eq('group_id', groupId);
+      if (profileError) throw profileError;
+
+      const { error: deleteError } = await supabase
+        .from('groups')
+        .delete()
+        .eq('id', groupId);
+      if (deleteError) throw deleteError;
+
+      await fetchDashboardData();
+      showNotice(`Successfully deleted group "${groupId}".`);
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to delete group: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const makeTeamLead = async (studentId, groupId) => {
     setSaving(true);
     try {
@@ -522,6 +592,135 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleBulkApproveStudentCompletions = async () => {
+    const studentIds = Object.keys(selectedStudentCerts).filter(id => selectedStudentCerts[id]);
+    if (studentIds.length === 0) {
+      showNotice('No students selected.');
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      const activeCertTemplate = templates.find(t => t.type === 'certificate');
+      if (!activeCertTemplate) {
+        showNotice('No Certificate Format uploaded. Please upload a format of type "Certificate Format" in the Formats tab first.');
+        return;
+      }
+      
+      const adminId = (await supabase.auth.getUser()).data.user?.id;
+      
+      const batchInserts = studentIds.map(id => {
+        const student = students.find(s => s.id === id);
+        return {
+          recipient_id: id,
+          recipient_role: 'student',
+          student_id: id,
+          group_id: student.group_id,
+          admin_approved: true,
+          admin_approved_by: adminId,
+          admin_approved_at: new Date().toISOString(),
+          mentor_approved: false,
+          file_url: activeCertTemplate.file_url
+        };
+      });
+
+      const { error } = await supabase.from('certificates').insert(batchInserts);
+      if (error) throw error;
+
+      for (const id of studentIds) {
+        const student = students.find(s => s.id === id);
+        const groupObj = groups.find(g => g.id === student.group_id);
+        if (groupObj?.mentor_id) {
+          await supabase.from('notifications').insert({
+            user_id: groupObj.mentor_id,
+            title: 'Certificate Approval Required',
+            content: `Coordinator has approved completion for ${student.full_name}. Please approve and sign their certificate.`,
+            link: '/mentor'
+          });
+        }
+      }
+
+      await fetchDashboardData();
+      setSelectedStudentCerts({});
+      showNotice(`Successfully approved completion for ${studentIds.length} students.`);
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to batch approve: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMergeGroups = async (e) => {
+    e.preventDefault();
+    if (!mergeSource || !mergeTarget) {
+      showNotice('Please select both source and target groups.');
+      return;
+    }
+    if (mergeSource === mergeTarget) {
+      showNotice('Source and target groups must be different.');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to merge group "${mergeSource}" into "${mergeTarget}"? This will move all students, milestones, meetings, and reports, and then delete group "${mergeSource}".`)) return;
+
+    setSaving(true);
+    try {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ group_id: mergeTarget })
+        .eq('group_id', mergeSource);
+      if (profileError) throw profileError;
+
+      const { error: milestoneError } = await supabase
+        .from('milestones')
+        .update({ group_id: mergeTarget })
+        .eq('group_id', mergeSource);
+      if (milestoneError) throw milestoneError;
+
+      const { error: meetingError } = await supabase
+        .from('meetings')
+        .update({ group_id: mergeTarget })
+        .eq('group_id', mergeSource);
+      if (meetingError) throw meetingError;
+
+      const { error: reportError } = await supabase
+        .from('reports')
+        .update({ group_id: mergeTarget })
+        .eq('group_id', mergeSource);
+      if (reportError) throw reportError;
+
+      const { error: deleteError } = await supabase
+        .from('groups')
+        .delete()
+        .eq('id', mergeSource);
+      if (deleteError) throw deleteError;
+
+      const savedSource = mergeSource;
+      setMergeSource('');
+      setMergeTarget('');
+      await fetchDashboardData();
+      showNotice(`Successfully merged group "${savedSource}" into "${mergeTarget}".`);
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to merge groups: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleViewMeetingScreenshot = async (filePath) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('meetings')
+        .createSignedUrl(filePath, 3600);
+      if (error) throw error;
+      window.open(data.signedUrl, '_blank');
+    } catch (error) {
+      console.error(error);
+      showNotice(`Could not load screenshot: ${error.message}`);
+    }
+  };
+
   const handleIssueMentorCertificate = async (mentor) => {
     setSaving(true);
     try {
@@ -597,6 +796,17 @@ export default function AdminDashboard() {
         const domainKey = findColumn(row, ['domain']);
         const groupKey = findColumn(row, ['groupid', 'teamid']);
         const capKey = findColumn(row, ['capacity', 'capacitycount', 'mentorcapacity']);
+        const sectionKey = findColumn(row, ['section', 'ieeesection']);
+        const cityKey = findColumn(row, ['city', 'location']);
+        const ieeeKey = findColumn(row, ['ieee', 'ieeemember', 'isieeemember']);
+        const yearKey = findColumn(row, ['year', 'graduationyear', 'gradyear']);
+        const collegeKey = findColumn(row, ['college', 'collegename', 'university']);
+        const designationKey = findColumn(row, ['designation', 'jobtitle', 'role_title']);
+        const orgKey = findColumn(row, ['organisation', 'organization', 'company', 'employer']);
+
+        const rawIeee = String(row[ieeeKey] || '').toLowerCase().trim();
+        const isIeee = rawIeee === 'true' || rawIeee === 'yes' || rawIeee === '1';
+
         return {
           id: String(row[idKey] || '').trim(),
           full_name: String(row[nameKey] || '').trim(),
@@ -605,6 +815,13 @@ export default function AdminDashboard() {
           domain: String(row[domainKey] || '').trim() || null,
           mentor_capacity: importRole === 'mentor' ? parseInt(row[capKey]) || 4 : null,
           group_id: importRole === 'student' ? String(row[groupKey] || '').trim() || null : null,
+          section: String(row[sectionKey] || '').trim() || null,
+          city: String(row[cityKey] || '').trim() || null,
+          is_ieee_member: isIeee,
+          graduation_year: String(row[yearKey] || '').trim() || null,
+          college: String(row[collegeKey] || '').trim() || null,
+          designation: String(row[designationKey] || '').trim() || null,
+          organisation: String(row[orgKey] || '').trim() || null,
         };
       }).filter((profile) => profile.full_name && profile.email);
       setParsedPeople(people);
@@ -642,14 +859,26 @@ export default function AdminDashboard() {
       const memberAssignments = [];
       rows.forEach((row) => {
         const keys = Object.keys(row);
-        const teamKey = keys.find((key) => normalise(key).includes('teamid'));
-        const domainKey = keys.find((key) => normalise(key).includes('domain'));
+        const teamKey = findColumn(row, ['teamid', 'team', 'groupid', 'group', 'teamnumber']);
+        const domainKey = findColumn(row, ['domain', 'domainfocus', 'track']);
         const id = String(row[teamKey] || `EMBS-TEAM-${count++}`).trim();
         teamMap.set(id, { id, domain: String(row[domainKey] || 'General').trim() || 'General' });
         
         for (let index = 1; index <= 6; index += 1) {
-          const nameKey = keys.find((key) => { const value = normalise(key); return value.includes('member') && value.includes('name') && value.endsWith(String(index)); });
-          const emailKey = keys.find((key) => { const value = normalise(key); return value.includes('member') && (value.includes('email') || value.includes('mail')) && value.endsWith(String(index)); });
+          const idxStr = String(index);
+          const nameKey = keys.find((key) => {
+            const val = normalise(key);
+            if (!val.includes(idxStr)) return false;
+            if (!val.includes('name')) return false;
+            if (val.includes('email') || val.includes('mail')) return false;
+            return true;
+          });
+          const emailKey = keys.find((key) => {
+            const val = normalise(key);
+            if (!val.includes(idxStr)) return false;
+            if (!val.includes('email') && !val.includes('mail')) return false;
+            return true;
+          });
           if (row[nameKey] && row[emailKey]) {
             memberAssignments.push({ full_name: String(row[nameKey]).trim(), email: String(row[emailKey]).trim().toLowerCase(), group_id: id });
           }
@@ -677,8 +906,12 @@ export default function AdminDashboard() {
       }));
 
       if (updates.length) {
-        const { error: updateError } = await supabase.from('profiles').upsert(updates, { onConflict: 'id' });
-        if (updateError) throw updateError;
+        const updatePromises = updates.map(u => 
+          supabase.from('profiles').update({ group_id: u.group_id }).eq('id', u.id)
+        );
+        const results = await Promise.all(updatePromises);
+        const firstError = results.find(r => r.error)?.error;
+        if (firstError) throw firstError;
       }
       
       const missing = parsedTeams.members.length - updates.length;
@@ -688,6 +921,38 @@ export default function AdminDashboard() {
     } catch (error) {
       console.error('Error importing teams:', error);
       showNotice(`Team import failed: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetAllGroupsData = async () => {
+    if (!window.confirm("Are you sure you want to delete all groups, meetings, reports, milestones, and certificates? This action cannot be undone.")) return;
+    setSaving(true);
+    try {
+      const { error: certError } = await supabase
+        .from('certificates')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (certError) throw certError;
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ group_id: null, is_lead: false })
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (profileError) throw profileError;
+
+      const { error: groupError } = await supabase
+        .from('groups')
+        .delete()
+        .neq('id', '_dummy_group_id_');
+      if (groupError) throw groupError;
+
+      await fetchDashboardData();
+      showNotice("All groups and related logs cleared successfully!");
+    } catch (error) {
+      console.error(error);
+      showNotice(`Failed to reset data: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -718,7 +983,8 @@ export default function AdminDashboard() {
                           r.group_id.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter ? r.status === statusFilter : true;
     const matchesDomain = domainFilter ? groups.find(g => g.id === r.group_id)?.domain === domainFilter : true;
-    return matchesSearch && matchesStatus && matchesDomain;
+    const matchesWeek = weekFilter ? String(r.week_number) === weekFilter : true;
+    return matchesSearch && matchesStatus && matchesDomain && matchesWeek;
   });
 
   const domains = [...new Set(groups.map(g => g.domain).filter(Boolean))];
@@ -738,7 +1004,8 @@ export default function AdminDashboard() {
           <button className={`btn ${activeTab === 'announcements' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('announcements')}><Bell size={16} /> Announcements</button>
           <button className={`btn ${activeTab === 'reports' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('reports')}><FileText size={16} /> Reports</button>
           <button className={`btn ${activeTab === 'certificates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('certificates')}><Award size={16} /> Certificates</button>
-          <button className={`btn ${activeTab === 'templates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('templates')}><FileSpreadsheet size={16} /> Formats</button>
+           <button className={`btn ${activeTab === 'templates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('templates')}><FileSpreadsheet size={16} /> Formats</button>
+          <button className={`btn ${activeTab === 'meetings' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('meetings')}><BookOpen size={16} /> Meetings</button>
         </div>
       </div>
 
@@ -898,8 +1165,8 @@ export default function AdminDashboard() {
             </form>
           </div>
 
-          {/* Import Sheets Section */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', flexWrap: 'wrap' }}>
+          {/* Import Sheets Section & Group Merge */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
             <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
               <h3><FileSpreadsheet size={18} /> Import Members via Spreadsheet</h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.5rem 0 1rem' }}>CSV/Excel columns: <strong>Name</strong> and <strong>Email Address</strong>. Optional: <strong>Domain</strong> and <strong>Group ID</strong>.</p>
@@ -928,6 +1195,50 @@ export default function AdminDashboard() {
               ) : (
                 <ImportPreview count={parsedTeams.groups.length} label="groups" onCancel={() => setParsedTeams(null)} onConfirm={importTeams} saving={saving} />
               )}
+            </div>
+
+            <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+              <h3><Users size={18} style={{ color: 'var(--ieee-blue)' }} /> Merge Internship Groups</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.5rem 0 1rem' }}>Merge all students, milestones, meetings, and reports of a source group into a target group.</p>
+              <form onSubmit={handleMergeGroups} style={{ display: 'grid', gap: '0.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Source Group</label>
+                    <select required value={mergeSource} onChange={(e) => setMergeSource(e.target.value)} style={{ padding: '0.35rem' }}>
+                      <option value="">Select Source</option>
+                      {groups.map(g => (
+                        <option key={g.id} value={g.id}>{g.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Target Group</label>
+                    <select required value={mergeTarget} onChange={(e) => setMergeTarget(e.target.value)} style={{ padding: '0.35rem' }}>
+                      <option value="">Select Target</option>
+                      {groups.map(g => (
+                        <option key={g.id} value={g.id}>{g.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem', padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} disabled={saving}>
+                  {saving ? 'Merging...' : 'Merge Groups'}
+                </button>
+              </form>
+            </div>
+
+            <div className="glass" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)', borderColor: 'var(--error)' }}>
+              <h3><AlertTriangle size={18} style={{ color: 'var(--error)' }} /> Reset Portal Groups</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.5rem 0 1rem' }}>Delete all groups, meetings, milestones, reports, and certificates. (For Excel re-testing).</p>
+              <button 
+                type="button" 
+                className="btn btn-outline" 
+                style={{ width: '100%', marginTop: '0.5rem', padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                onClick={resetAllGroupsData}
+                disabled={saving}
+              >
+                {saving ? 'Resetting...' : 'Delete All Groups'}
+              </button>
             </div>
           </div>
 
@@ -986,9 +1297,20 @@ export default function AdminDashboard() {
                     >
                       {/* Group Basics */}
                       <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <strong style={{ color: 'var(--ieee-dark-blue)', fontSize: '1.1rem' }}>{group.id}</strong>
-                          {!group.mentor_id && <span className="badge badge-error">Needs Mentor</span>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <strong style={{ color: 'var(--ieee-dark-blue)', fontSize: '1.1rem' }}>{group.id}</strong>
+                            {!group.mentor_id && <span className="badge badge-error">Needs Mentor</span>}
+                          </div>
+                          <button
+                            type="button"
+                            style={{ border: 'none', background: 'transparent', color: 'var(--error)', cursor: 'pointer', padding: '0.25rem', display: 'inline-flex', alignItems: 'center' }}
+                            onClick={() => deleteGroup(group.id)}
+                            title="Delete Group"
+                            disabled={saving}
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                         <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--ieee-blue)' }}>Domain: {group.domain}</span>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
@@ -1191,61 +1513,149 @@ export default function AdminDashboard() {
 
             {/* Filter and Bulk Actions Bar */}
             {(() => {
+              const combinedProfiles = [...students, ...mentors];
+              const allSections = [...new Set(combinedProfiles.map(p => p.section).filter(Boolean))];
+              const allCities = [...new Set(combinedProfiles.map(p => p.city).filter(Boolean))];
+              const allYears = [...new Set(combinedProfiles.map(p => p.graduation_year).filter(Boolean))];
+              const allColleges = [...new Set(combinedProfiles.map(p => p.college).filter(Boolean))];
+              const allOrgs = [...new Set(combinedProfiles.map(p => p.organisation).filter(Boolean))];
+              const allDesignations = [...new Set(combinedProfiles.map(p => p.designation).filter(Boolean))];
+              const allDomainsList = [...new Set(combinedProfiles.map(p => p.domain).filter(Boolean))];
+
               const list = manageRole === 'student' ? students : mentors;
-              const filteredList = list.filter(m => 
-                normalise(m.full_name).includes(normalise(managementSearch)) || 
-                normalise(m.email).includes(normalise(managementSearch)) ||
-                (m.domain && normalise(m.domain).includes(normalise(managementSearch)))
-              );
+              const filteredList = list.filter(m => {
+                const matchesSearch = normalise(m.full_name).includes(normalise(managementSearch)) || 
+                                      normalise(m.email).includes(normalise(managementSearch)) ||
+                                      (m.domain && normalise(m.domain).includes(normalise(managementSearch)));
+                const matchesSection = mgmtSectionFilter ? m.section === mgmtSectionFilter : true;
+                const matchesCity = mgmtCityFilter ? m.city === mgmtCityFilter : true;
+                const matchesIeee = mgmtIeeeFilter ? String(m.is_ieee_member) === mgmtIeeeFilter : true;
+                const matchesYear = mgmtYearFilter ? m.graduation_year === mgmtYearFilter : true;
+                const matchesDomain = mgmtDomainFilter ? m.domain === mgmtDomainFilter : true;
+                const matchesCollege = mgmtCollegeFilter ? m.college === mgmtCollegeFilter : true;
+                const matchesOrg = mgmtOrgFilter ? m.organisation === mgmtOrgFilter : true;
+                const matchesDesignation = mgmtDesignationFilter ? m.designation === mgmtDesignationFilter : true;
+                return matchesSearch && matchesSection && matchesCity && matchesIeee && matchesYear && matchesDomain && matchesCollege && matchesOrg && matchesDesignation;
+              });
               
               const selectedCount = Object.keys(selectedMembers).filter(id => selectedMembers[id]).length;
               const isAllSelected = filteredList.length > 0 && filteredList.every(m => selectedMembers[m.id]);
 
               return (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <input 
-                      placeholder={`Search ${manageRole}s by name, email, or domain...`}
-                      value={managementSearch}
-                      onChange={(e) => setManagementSearch(e.target.value)}
-                      style={{ maxWidth: '350px' }}
-                    />
-                    
-                    {filteredList.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', margin: 0 }}>
-                          <input 
-                            type="checkbox" 
-                            checked={isAllSelected}
-                            onChange={(e) => {
-                              const nextSelected = {};
-                              if (e.target.checked) {
-                                filteredList.forEach(m => {
-                                  nextSelected[m.id] = true;
-                                });
-                              }
-                              setSelectedMembers(nextSelected);
-                            }}
-                            style={{ width: 'auto' }}
-                          />
-                          Select All
-                        </label>
-                        {selectedCount > 0 && (
-                          <button 
-                            className="btn btn-outline" 
-                            type="button"
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', color: 'var(--error)', borderColor: 'var(--error)' }}
-                            onClick={() => {
-                              const ids = Object.keys(selectedMembers).filter(id => selectedMembers[id]);
-                              deleteProfiles(ids, manageRole);
-                            }}
-                            disabled={saving}
-                          >
-                            <Trash2 size={12} style={{ marginRight: '0.35rem' }} /> Delete Selected ({selectedCount})
-                          </button>
-                        )}
+                  <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column', marginBottom: '1.5rem', background: 'var(--bg-primary)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                      <input 
+                        placeholder={`Search ${manageRole}s by name, email, or domain...`}
+                        value={managementSearch}
+                        onChange={(e) => setManagementSearch(e.target.value)}
+                        style={{ maxWidth: '350px', flex: 1 }}
+                      />
+                      
+                      {filteredList.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', margin: 0 }}>
+                            <input 
+                              type="checkbox" 
+                              checked={isAllSelected}
+                              onChange={(e) => {
+                                const nextSelected = {};
+                                if (e.target.checked) {
+                                  filteredList.forEach(m => {
+                                    nextSelected[m.id] = true;
+                                  });
+                                }
+                                setSelectedMembers(nextSelected);
+                              }}
+                              style={{ width: 'auto' }}
+                            />
+                            Select All
+                          </label>
+                          {selectedCount > 0 && (
+                            <button 
+                              className="btn btn-outline" 
+                              type="button"
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                              onClick={() => {
+                                const ids = Object.keys(selectedMembers).filter(id => selectedMembers[id]);
+                                deleteProfiles(ids, manageRole);
+                              }}
+                              disabled={saving}
+                            >
+                              <Trash2 size={12} style={{ marginRight: '0.35rem' }} /> Delete Selected ({selectedCount})
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Advanced Filters Panel */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Section</label>
+                        <select value={mgmtSectionFilter} onChange={(e) => setMgmtSectionFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Sections</option>
+                          {allSections.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
                       </div>
-                    )}
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>City</label>
+                        <select value={mgmtCityFilter} onChange={(e) => setMgmtCityFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Cities</option>
+                          {allCities.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>IEEE Member</label>
+                        <select value={mgmtIeeeFilter} onChange={(e) => setMgmtIeeeFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All</option>
+                          <option value="true">IEEE Member</option>
+                          <option value="false">Non-Member</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Graduation Year</label>
+                        <select value={mgmtYearFilter} onChange={(e) => setMgmtYearFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Years</option>
+                          {allYears.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Domain Focus</label>
+                        <select value={mgmtDomainFilter} onChange={(e) => setMgmtDomainFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Domains</option>
+                          {allDomainsList.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>College Name</label>
+                        <select value={mgmtCollegeFilter} onChange={(e) => setMgmtCollegeFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Colleges</option>
+                          {allColleges.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Organization</label>
+                        <select value={mgmtOrgFilter} onChange={(e) => setMgmtOrgFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Organizations</option>
+                          {allOrgs.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Designation</label>
+                        <select value={mgmtDesignationFilter} onChange={(e) => setMgmtDesignationFilter(e.target.value)} style={{ padding: '0.35rem', fontSize: '0.75rem' }}>
+                          <option value="">All Designations</option>
+                          {allDesignations.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Members Grid */}
@@ -1404,6 +1814,12 @@ export default function AdminDashboard() {
                 <option value="">All Domains</option>
                 {domains.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
+              <select value={weekFilter} onChange={(e) => setWeekFilter(e.target.value)} style={{ padding: '0.5rem', width: 'auto' }}>
+                <option value="">All Weeks</option>
+                {[...Array(12)].map((_, i) => (
+                  <option key={i+1} value={i+1}>Week {i+1}</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -1419,7 +1835,8 @@ export default function AdminDashboard() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'start', flexWrap: 'wrap' }}>
                         <div>
                           <strong style={{ color: 'var(--ieee-blue)', fontSize: '1.05rem' }}>{report.title}</strong>
-                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.2rem' }}>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.2rem', alignItems: 'center' }}>
+                            {report.week_number && <span className="badge badge-info" style={{ fontSize: '0.65rem', padding: '0.05rem 0.25rem' }}>Week {report.week_number}</span>}
                             <span className="badge badge-info">{report.group_id}</span>
                             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                               submitted by {report.submitter} on {new Date(report.created_at).toLocaleString()}
@@ -1544,6 +1961,40 @@ export default function AdminDashboard() {
                 Approve student completion. Once approved, the assigned group mentor must sign and complete the certificate.
               </p>
               
+              {/* Select All & Bulk Action Bar */}
+              {students.filter(s => s.group_id && !certificates.some(c => c.recipient_id === s.id && c.admin_approved)).length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-primary)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox"
+                      checked={
+                        students.filter(s => s.group_id && !certificates.some(c => c.recipient_id === s.id && c.admin_approved))
+                          .every(s => selectedStudentCerts[s.id])
+                      }
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        const pendingStudents = students.filter(s => s.group_id && !certificates.some(c => c.recipient_id === s.id && c.admin_approved));
+                        const nextSelected = { ...selectedStudentCerts };
+                        pendingStudents.forEach(s => {
+                          nextSelected[s.id] = checked;
+                        });
+                        setSelectedStudentCerts(nextSelected);
+                      }}
+                    />
+                    Select All Pending ({students.filter(s => s.group_id && !certificates.some(c => c.recipient_id === s.id && c.admin_approved)).length})
+                  </label>
+                  
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                    onClick={handleBulkApproveStudentCompletions}
+                    disabled={saving || !activeCertTemplate || Object.keys(selectedStudentCerts).filter(id => selectedStudentCerts[id]).length === 0}
+                  >
+                    Approve Selected ({Object.keys(selectedStudentCerts).filter(id => selectedStudentCerts[id]).length})
+                  </button>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gap: '1rem', maxHeight: '580px', overflowY: 'auto' }}>
                 {students.filter(s => s.group_id).map(student => {
                   const cert = certificates.find(c => c.recipient_id === student.id && c.recipient_role === 'student');
@@ -1552,16 +2003,30 @@ export default function AdminDashboard() {
                   
                   return (
                     <div key={student.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff', flexWrap: 'wrap', gap: '0.75rem' }}>
-                      <div>
-                        <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{student.full_name}</strong>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>Group: <strong>{student.group_id}</strong></div>
-                        <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.35rem' }}>
-                          <span className={`badge ${isAdminApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
-                            Admin: {isAdminApproved ? 'Approved' : 'Pending'}
-                          </span>
-                          <span className={`badge ${isMentorApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
-                            Mentor: {isMentorApproved ? 'Approved' : 'Pending'}
-                          </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {!isAdminApproved && (
+                          <input 
+                            type="checkbox"
+                            checked={!!selectedStudentCerts[student.id]}
+                            onChange={(e) => {
+                              setSelectedStudentCerts(prev => ({
+                                ...prev,
+                                [student.id]: e.target.checked
+                              }));
+                            }}
+                          />
+                        )}
+                        <div>
+                          <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{student.full_name}</strong>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>Group: <strong>{student.group_id}</strong></div>
+                          <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.35rem' }}>
+                            <span className={`badge ${isAdminApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                              Admin: {isAdminApproved ? 'Approved' : 'Pending'}
+                            </span>
+                            <span className={`badge ${isMentorApproved ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                              Mentor: {isMentorApproved ? 'Approved' : 'Pending'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                       
@@ -1664,7 +2129,7 @@ export default function AdminDashboard() {
                   <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: '#fff' }}>
                     <div>
                       <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{t.name}</strong>
-                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
                         <span className={`badge ${t.type === 'report' ? 'badge-info' : t.type === 'presentation' ? 'badge-success' : 'badge-warning'}`}>
                           {t.type === 'report' ? 'Report Doc' : t.type === 'presentation' ? 'Presentation PPT' : 'Certificate Format'}
                         </span>
@@ -1692,6 +2157,66 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {activeTab === 'meetings' && (
+        <div className="glass animate-fade-in" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+          <h3><BookOpen size={20} /> Mentorship Meeting Logs</h3>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+            Review all scheduled and conducted mentorship sessions, including student attendance logs and uploaded meeting screenshots.
+          </p>
+
+          <div style={{ display: 'grid', gap: '1rem', marginTop: '1.5rem' }}>
+            {meetings.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)' }}>No meetings have been logged or scheduled yet.</p>
+            ) : (
+              meetings.map(m => {
+                const isConducted = m.status === 'conducted';
+                return (
+                  <article key={m.id} style={{ padding: '1.25rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: isConducted ? '#fff' : 'rgba(59, 130, 246, 0.02)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Calendar size={18} style={{ color: isConducted ? 'var(--success)' : 'var(--ieee-blue)' }} />
+                        <strong style={{ fontSize: '1rem' }}>Group: {m.group_id} Mentoring Session</strong>
+                        <span className={`badge ${isConducted ? 'badge-success' : 'badge-info'}`} style={{ fontSize: '0.65rem' }}>
+                          {isConducted ? 'Conducted' : 'Scheduled'}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(m.held_at).toLocaleString()}</span>
+                    </div>
+
+                    {isConducted && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600, margin: '0.35rem 0 0.5rem' }}>
+                        Attendees: {m.attendance || 'None'}
+                      </div>
+                    )}
+
+                    <p style={{ fontSize: '0.85rem', margin: '0.25rem 0 0.5rem', color: 'var(--text-primary)' }}>
+                      <strong>{isConducted ? 'Discussion Notes' : 'Meeting Agenda'}:</strong> {m.notes}
+                    </p>
+
+                    {isConducted && m.next_actions && (
+                      <div style={{ padding: '0.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                        <strong>Action Items:</strong> {m.next_actions}
+                      </div>
+                    )}
+
+                    {isConducted && m.screenshot_url && (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        <button 
+                          className="btn btn-outline" 
+                          style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                          onClick={() => handleViewMeetingScreenshot(m.screenshot_url)}
+                        >
+                          View Meeting Screenshot
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Certificate Printing / Preview Overlay Modal */}
       {certPreview && (() => {
