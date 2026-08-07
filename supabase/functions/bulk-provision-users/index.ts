@@ -43,49 +43,66 @@ Deno.serve(async (request) => {
     if (!['mentor', 'student'].includes(role) || !Array.isArray(people)) throw new Error('Invalid import request.');
 
     const results = { invited: 0, existing: 0, failed: [] as { email: string; reason: string }[] };
-    for (const rawPerson of people as Person[]) {
-      const email = String(rawPerson.email || '').trim().toLowerCase();
-      const fullName = String(rawPerson.full_name || '').trim();
-      if (!email || !fullName) { results.failed.push({ email: email || 'Unknown', reason: 'Missing name or email.' }); continue; }
-
-      const { data: existingProfile } = await adminClient.from('profiles').select('id, role').eq('email', email).maybeSingle();
-      if (existingProfile) {
-        results.existing += 1;
-        // If student, link to their imported group
-        if (role === 'student' && rawPerson.group_id) {
-          await adminClient.from('profiles').update({ group_id: rawPerson.group_id }).eq('id', existingProfile.id);
+    
+    // Process in batches of 10 to speed up execution and prevent timeouts
+    const batchSize = 10;
+    for (let i = 0; i < people.length; i += batchSize) {
+      const chunk = people.slice(i, i + batchSize);
+      await Promise.all(chunk.map(async (rawPerson) => {
+        const email = String(rawPerson.email || '').trim().toLowerCase();
+        const fullName = String(rawPerson.full_name || '').trim();
+        if (!email || !fullName) {
+          results.failed.push({ email: email || 'Unknown', reason: 'Missing name or email.' });
+          return;
         }
-        continue;
-      }
 
-      const { data: invitation, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-        data: { full_name: fullName, role },
-        redirectTo: redirectTo || undefined,
-      });
-      if (inviteError || !invitation.user) {
-        results.failed.push({ email, reason: inviteError?.message || 'Invitation could not be created.' });
-        continue;
-      }
+        const { data: existingProfile } = await adminClient.from('profiles').select('id, role').eq('email', email).maybeSingle();
+        if (existingProfile) {
+          results.existing += 1;
+          if (role === 'student' && rawPerson.group_id) {
+            await adminClient.from('profiles').update({ group_id: rawPerson.group_id }).eq('id', existingProfile.id);
+          }
+          return;
+        }
 
-      const { error: profileError } = await adminClient.from('profiles').insert({
-        id: invitation.user.id,
-        email,
-        full_name: fullName,
-        role,
-        domain: rawPerson.domain || null,
-        group_id: role === 'student' ? rawPerson.group_id || null : null,
-        mentor_capacity: role === 'mentor' ? rawPerson.mentor_capacity || 4 : null,
-        section: rawPerson.section || null,
-        city: rawPerson.city || null,
-        is_ieee_member: !!rawPerson.is_ieee_member,
-        graduation_year: rawPerson.graduation_year || null,
-        college: rawPerson.college || null,
-        designation: rawPerson.designation || null,
-        organisation: rawPerson.organisation || null,
-      });
-      if (profileError) {
-        results.failed.push({ email, reason: `Account invited, but profile failed: ${profileError.message}` });
-      } else results.invited += 1;
+        let userId = '';
+        const { data: invitation, error: inviteError } = await adminClient.auth.admin.createUser({
+          email,
+          password: role === 'student' ? 'student123' : 'mentor123',
+          email_confirm: true,
+          user_metadata: { full_name: fullName, role }
+        });
+
+        if (inviteError) {
+          results.failed.push({ email, reason: inviteError.message });
+          return;
+        } else {
+          userId = invitation.user.id;
+        }
+
+        const { error: profileError } = await adminClient.from('profiles').insert({
+          id: userId,
+          email,
+          full_name: fullName,
+          role,
+          domain: rawPerson.domain || null,
+          group_id: role === 'student' ? rawPerson.group_id || null : null,
+          mentor_capacity: role === 'mentor' ? rawPerson.mentor_capacity || 4 : null,
+          section: rawPerson.section || null,
+          city: rawPerson.city || null,
+          is_ieee_member: !!rawPerson.is_ieee_member,
+          graduation_year: rawPerson.graduation_year || null,
+          college: rawPerson.college || null,
+          designation: rawPerson.designation || null,
+          organisation: rawPerson.organisation || null,
+        });
+
+        if (profileError) {
+          results.failed.push({ email, reason: `Account created, but profile failed: ${profileError.message}` });
+        } else {
+          results.invited += 1;
+        }
+      }));
     }
 
     return Response.json(results, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
