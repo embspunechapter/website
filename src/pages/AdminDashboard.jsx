@@ -916,6 +916,9 @@ export default function AdminDashboard() {
         mentors: [...mentorMap.values()],
         rawGroups: rawGroupsList
       });
+      if (!memberAssignments.length) {
+        showNotice('No student name/email pairs were found. Check that the sheet includes member name and email columns.');
+      }
     });
   };
 
@@ -1309,7 +1312,14 @@ export default function AdminDashboard() {
                   <button className="btn btn-secondary" onClick={() => teamsInputRef.current?.click()}><Upload size={16} /> Select Team Sheet</button>
                 </>
               ) : (
-                <ImportPreview count={parsedTeams.groups.length} label="groups" onCancel={() => setParsedTeams(null)} onConfirm={importTeams} saving={saving} />
+                <ImportPreview
+                  count={parsedTeams.groups.length}
+                  label="groups"
+                  detail={`${parsedTeams.members.length} students and ${parsedTeams.mentors.length} mentors detected.`}
+                  onCancel={() => setParsedTeams(null)}
+                  onConfirm={importTeams}
+                  saving={saving}
+                />
               )}
             </div>
 
@@ -2355,10 +2365,11 @@ export default function AdminDashboard() {
 
 
 
-function ImportPreview({ count, label = 'profiles', onCancel, onConfirm, saving }) {
+function ImportPreview({ count, label = 'profiles', detail, onCancel, onConfirm, saving }) {
   return (
     <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
       <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem' }}>{count} {label} parsed successfully.</span>
+      {detail && <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{detail}</span>}
       <button className="btn btn-outline" style={{ padding: '0.4rem 0.8rem' }} onClick={onCancel}>Cancel</button>
       <button className="btn btn-primary" style={{ padding: '0.4rem 0.8rem' }} disabled={saving} onClick={onConfirm}>
         {saving ? 'Importing…' : 'Confirm Import'}
