@@ -923,14 +923,33 @@ export default function AdminDashboard() {
     if (!parsedTeams) return;
     setSaving(true);
     try {
-      const { error: groupError } = await supabase.from('groups').upsert(parsedTeams.groups, { onConflict: 'id' });
+      const uniqueGroups = [];
+      const seenGroupIds = new Set();
+      for (const g of (parsedTeams.groups || [])) {
+        if (!seenGroupIds.has(g.id)) {
+          seenGroupIds.add(g.id);
+          uniqueGroups.push(g);
+        }
+      }
+
+      const { error: groupError } = await supabase.from('groups').upsert(uniqueGroups, { onConflict: 'id' });
       if (groupError) throw groupError;
+
+      const uniqueMentors = [];
+      const seenMentorEmails = new Set();
+      for (const m of (parsedTeams.mentors || [])) {
+        const email = m.email.toLowerCase();
+        if (!seenMentorEmails.has(email)) {
+          seenMentorEmails.add(email);
+          uniqueMentors.push(m);
+        }
+      }
 
       let mentorsInvited = 0;
       let mentorsExisting = 0;
-      if (parsedTeams.mentors?.length) {
+      if (uniqueMentors.length) {
         const { data: mentorRes, error: mentorErr } = await supabase.functions.invoke('bulk-provision-users', {
-          body: { role: 'mentor', people: parsedTeams.mentors, redirectTo: window.location.origin }
+          body: { role: 'mentor', people: uniqueMentors, redirectTo: window.location.origin }
         });
         if (mentorErr) throw mentorErr;
         if (mentorRes?.error) throw new Error(mentorRes.error);
@@ -938,11 +957,21 @@ export default function AdminDashboard() {
         mentorsExisting = mentorRes.existing || 0;
       }
 
+      const uniqueMembers = [];
+      const seenMemberEmails = new Set();
+      for (const m of (parsedTeams.members || [])) {
+        const email = m.email.toLowerCase();
+        if (!seenMemberEmails.has(email)) {
+          seenMemberEmails.add(email);
+          uniqueMembers.push(m);
+        }
+      }
+
       let studentsInvited = 0;
       let studentsExisting = 0;
-      if (parsedTeams.members?.length) {
+      if (uniqueMembers.length) {
         const { data: studentRes, error: studentErr } = await supabase.functions.invoke('bulk-provision-users', {
-          body: { role: 'student', people: parsedTeams.members, redirectTo: window.location.origin }
+          body: { role: 'student', people: uniqueMembers, redirectTo: window.location.origin }
         });
         if (studentErr) throw studentErr;
         if (studentRes?.error) throw new Error(studentRes.error);
@@ -958,14 +987,19 @@ export default function AdminDashboard() {
 
       const mentorEmailToId = new Map(allMentors.map(m => [m.email.toLowerCase(), m.id]));
 
-      const groupUpdates = parsedTeams.rawGroups.map(g => {
-        const mId = mentorEmailToId.get(g.mentorEmail.toLowerCase());
-        return {
-          id: g.id,
-          mentor_id: mId || null,
-          domain: g.domain
-        };
-      });
+      const seenGroupUpdateIds = new Set();
+      const groupUpdates = [];
+      for (const g of (parsedTeams.rawGroups || [])) {
+        if (!seenGroupUpdateIds.has(g.id)) {
+          seenGroupUpdateIds.add(g.id);
+          const mId = mentorEmailToId.get(g.mentorEmail.toLowerCase());
+          groupUpdates.push({
+            id: g.id,
+            mentor_id: mId || null,
+            domain: g.domain
+          });
+        }
+      }
 
       if (groupUpdates.length) {
         const { error: groupMentorError } = await supabase
@@ -977,7 +1011,7 @@ export default function AdminDashboard() {
       await fetchDashboardData();
       showNotice(
         `Team import successful! ` +
-        `Created ${parsedTeams.groups.length} groups. ` +
+        `Created ${uniqueGroups.length} groups. ` +
         `Mentors: ${mentorsInvited} invited, ${mentorsExisting} matched. ` +
         `Students: ${studentsInvited} invited, ${studentsExisting} linked/matched.`
       );
