@@ -885,21 +885,22 @@ export default function AdminDashboard() {
           rawGroupsList.push({ id, mentorEmail, domain });
         }
         
-        for (let index = 1; index <= 6; index += 1) {
-          const idxStr = String(index);
-          const nameKey = keys.find((key) => {
-            const val = normalise(key);
-            if (!val.includes(idxStr)) return false;
-            if (!val.includes('name')) return false;
-            if (val.includes('email') || val.includes('mail')) return false;
-            return true;
-          });
-          const emailKey = keys.find((key) => {
-            const val = normalise(key);
-            if (!val.includes(idxStr)) return false;
-            if (!val.includes('email') && !val.includes('mail')) return false;
-            return true;
-          });
+        // Google Forms exports use headers such as "Name of member 1" and
+        // "Mail id of member1". Pair them by the member number, rather than
+        // relying on a fixed header order or a maximum number of members.
+        const memberColumns = new Map();
+        keys.forEach((key) => {
+          const header = normalise(key);
+          const memberMatch = header.match(/member(\d+)/);
+          if (!memberMatch || header.includes('mentor')) return;
+          const memberNumber = memberMatch[1];
+          const columns = memberColumns.get(memberNumber) || {};
+          if (header.includes('email') || header.includes('mail')) columns.emailKey = key;
+          else if (header.includes('name')) columns.nameKey = key;
+          memberColumns.set(memberNumber, columns);
+        });
+
+        for (const { nameKey, emailKey } of memberColumns.values()) {
           if (row[nameKey] && row[emailKey]) {
             memberAssignments.push({
               full_name: String(row[nameKey]).trim(),
