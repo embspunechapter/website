@@ -921,6 +921,7 @@ export default function AdminDashboard() {
 
   const importTeams = async () => {
     if (!parsedTeams) return;
+    console.log('Importing teams. parsedTeams payload:', parsedTeams);
     setSaving(true);
     try {
       const uniqueGroups = [];
@@ -931,6 +932,8 @@ export default function AdminDashboard() {
           uniqueGroups.push(g);
         }
       }
+
+      console.log('uniqueGroups list:', uniqueGroups);
 
       const { error: groupError } = await supabase.from('groups').upsert(uniqueGroups, { onConflict: 'id' });
       if (groupError) throw groupError;
@@ -945,8 +948,11 @@ export default function AdminDashboard() {
         }
       }
 
+      console.log('uniqueMentors list:', uniqueMentors);
+
       let mentorsInvited = 0;
       let mentorsExisting = 0;
+      let mentorsFailed = 0;
       if (uniqueMentors.length) {
         const { data: mentorRes, error: mentorErr } = await supabase.functions.invoke('bulk-provision-users', {
           body: { role: 'mentor', people: uniqueMentors, redirectTo: window.location.origin }
@@ -955,6 +961,10 @@ export default function AdminDashboard() {
         if (mentorRes?.error) throw new Error(mentorRes.error);
         mentorsInvited = mentorRes.invited || 0;
         mentorsExisting = mentorRes.existing || 0;
+        mentorsFailed = mentorRes.failed?.length || 0;
+        if (mentorRes.failed?.length) {
+          console.warn('Failed mentors:', mentorRes.failed);
+        }
       }
 
       const uniqueMembers = [];
@@ -967,8 +977,11 @@ export default function AdminDashboard() {
         }
       }
 
+      console.log('uniqueMembers list:', uniqueMembers);
+
       let studentsInvited = 0;
       let studentsExisting = 0;
+      let studentsFailed = 0;
       if (uniqueMembers.length) {
         const { data: studentRes, error: studentErr } = await supabase.functions.invoke('bulk-provision-users', {
           body: { role: 'student', people: uniqueMembers, redirectTo: window.location.origin }
@@ -977,6 +990,10 @@ export default function AdminDashboard() {
         if (studentRes?.error) throw new Error(studentRes.error);
         studentsInvited = studentRes.invited || 0;
         studentsExisting = studentRes.existing || 0;
+        studentsFailed = studentRes.failed?.length || 0;
+        if (studentRes.failed?.length) {
+          console.warn('Failed students:', studentRes.failed);
+        }
       }
 
       const { data: allMentors, error: fetchMentorsError } = await supabase
@@ -1001,6 +1018,8 @@ export default function AdminDashboard() {
         }
       }
 
+      console.log('groupUpdates list:', groupUpdates);
+
       if (groupUpdates.length) {
         const { error: groupMentorError } = await supabase
           .from('groups').upsert(groupUpdates, { onConflict: 'id' });
@@ -1012,8 +1031,8 @@ export default function AdminDashboard() {
       showNotice(
         `Team import successful! ` +
         `Created ${uniqueGroups.length} groups. ` +
-        `Mentors: ${mentorsInvited} invited, ${mentorsExisting} matched. ` +
-        `Students: ${studentsInvited} invited, ${studentsExisting} linked/matched.`
+        `Mentors: ${mentorsInvited} invited, ${mentorsExisting} matched${mentorsFailed ? `, ${mentorsFailed} failed` : ''}. ` +
+        `Students: ${studentsInvited} invited, ${studentsExisting} linked/matched${studentsFailed ? `, ${studentsFailed} failed` : ''}.`
       );
     } catch (error) {
       console.error('Error importing teams:', error);
