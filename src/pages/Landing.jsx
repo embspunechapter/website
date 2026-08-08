@@ -141,7 +141,7 @@ export default function Landing() {
 
       setRegNotice({
         text: isIndividual 
-          ? 'Registration successful! Your individual account has been provisioned. Log in using your email and password "student123".'
+          ? `Registration successful! Your individual group (${data.groupId}) has been created. Log in using your email and password "student123".`
           : `Team "${teamName}" registered successfully! Accounts for all ${members.length + 1} members have been created. Log in using email and password "student123".`,
         type: 'success'
       });

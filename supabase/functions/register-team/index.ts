@@ -42,6 +42,8 @@ Deno.serve(async (request) => {
 
     const cleanTeamName = String(teamName || '').trim();
     const cleanCollege = String(college || '').trim();
+    const individualGroupId = `IND-${cleanLeader.email.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+    const groupId = isIndividual ? individualGroupId : cleanTeamName;
 
     if (!cleanCollege) {
       throw new Error('College name is required.');
@@ -101,19 +103,20 @@ Deno.serve(async (request) => {
       throw new Error(`The email address "${failedEmail}" is already registered in the system. Please use a unique email.`);
     }
 
-    // 4. Create the group (if Team)
-    if (!isIndividual) {
+    // 4. Create a group for every registration. Individual applicants receive
+    // a one-person group so they are visible and manageable in the Admin panel.
+    {
       const { error: groupError } = await adminClient.from('groups').insert({
-        id: cleanTeamName,
-        domain: 'General'
+        id: groupId,
+        domain: isIndividual ? 'Individual Participation' : 'General'
       });
       if (groupError) throw new Error(`Failed to create team: ${groupError.message}`);
     }
 
     // 5. Provision Users (Leader + Members)
     const allUsersToCreate = [
-      { payload: cleanLeader, isLead: !isIndividual, group: isIndividual ? null : cleanTeamName, isIeee: cleanLeader.is_ieee_member },
-      ...cleanMembers.map(m => ({ payload: m, isLead: false, group: cleanTeamName, isIeee: false }))
+      { payload: cleanLeader, isLead: true, group: groupId, isIeee: cleanLeader.is_ieee_member },
+      ...cleanMembers.map(m => ({ payload: m, isLead: false, group: groupId, isIeee: false }))
     ];
 
     for (const u of allUsersToCreate) {
@@ -148,7 +151,7 @@ Deno.serve(async (request) => {
       }
     }
 
-    return Response.json({ success: true }, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return Response.json({ success: true, groupId }, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     return Response.json({ error: error.message || 'Registration failed.' }, { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
