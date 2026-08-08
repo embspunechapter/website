@@ -108,7 +108,9 @@ Deno.serve(async (request) => {
           role,
           domain: rawPerson.domain || null,
           group_id: role === 'student' ? rawPerson.group_id || null : null,
-          mentor_capacity: role === 'mentor' ? rawPerson.mentor_capacity || 4 : null,
+          // The current profiles schema requires a value even for students.
+          // Zero accurately represents that a student cannot mentor teams.
+          mentor_capacity: role === 'mentor' ? rawPerson.mentor_capacity || 4 : 0,
           section: rawPerson.section || null,
           city: rawPerson.city || null,
           is_ieee_member: !!rawPerson.is_ieee_member,
