@@ -76,6 +76,11 @@ export default function Landing() {
       setRegNotice({ text: 'Leader name and email are required.', type: 'error' });
       return;
     }
+    const isValidEmail = (email) => /^\S+@\S+\.\S+$/.test(email.trim());
+    if (!isValidEmail(leader.email)) {
+      setRegNotice({ text: 'Enter a valid email address for the leader.', type: 'error' });
+      return;
+    }
 
     if (!isIndividual) {
       if (!teamName.trim()) {
@@ -91,6 +96,10 @@ export default function Landing() {
       for (let m of members) {
         if (!m.full_name.trim() || !m.email.trim()) {
           setRegNotice({ text: 'Please fill in all member details or reduce member count.', type: 'error' });
+          return;
+        }
+        if (!isValidEmail(m.email)) {
+          setRegNotice({ text: `Enter a valid email address for ${m.full_name || 'each team member'}.`, type: 'error' });
           return;
         }
         const mName = m.full_name.trim().toLowerCase();
@@ -310,7 +319,7 @@ export default function Landing() {
           </div>
         )}
 
-        <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <form noValidate onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
           {/* Registration Type & Basic Info */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
@@ -620,4 +629,3 @@ function StatCounter({ label, value }) {
     </div>
   );
 }
-
