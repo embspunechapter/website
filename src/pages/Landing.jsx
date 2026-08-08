@@ -126,23 +126,49 @@ export default function Landing() {
 
     setRegLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('register-team', {
-        body: {
-          isIndividual,
-          teamName: isIndividual ? null : teamName,
-          college,
-          leader,
-          members: isIndividual ? [] : members
+      if (!isIndividual) {
+        // Verify unique team name in registrations and groups
+        const { data: regCheck } = await supabase
+          .from('registrations')
+          .select('id')
+          .eq('team_name', teamName.trim())
+          .eq('status', 'pending')
+          .maybeSingle();
+        if (regCheck) {
+          throw new Error(`Team name "${teamName}" already has a pending registration request.`);
         }
+
+        const { data: groupCheck } = await supabase
+          .from('groups')
+          .select('id')
+          .eq('id', teamName.trim())
+          .maybeSingle();
+        if (groupCheck) {
+          throw new Error(`Team name "${teamName}" is already registered in the system. Please use another name.`);
+        }
+      }
+
+      // Insert registration record
+      const { error } = await supabase.from('registrations').insert({
+        is_individual: isIndividual,
+        team_name: isIndividual ? null : teamName.trim(),
+        college: college.trim(),
+        leader_name: leader.full_name.trim(),
+        leader_email: leader.email.trim().toLowerCase(),
+        leader_gender: leader.gender,
+        leader_is_ieee: leader.is_ieee_member,
+        members: isIndividual ? [] : members.map(m => ({
+          full_name: m.full_name.trim(),
+          email: m.email.trim().toLowerCase(),
+          gender: m.gender
+        })),
+        status: 'pending'
       });
 
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
 
       setRegNotice({
-        text: isIndividual 
-          ? `Registration successful! Your individual group (${data.groupId}) has been created. Log in using your email and password "student123".`
-          : `Team "${teamName}" registered successfully! Accounts for all ${members.length + 1} members have been created. Log in using email and password "student123".`,
+        text: 'Registration request submitted successfully! Once approved by the coordinator, the login credentials will be emailed to the team leader.',
         type: 'success'
       });
 

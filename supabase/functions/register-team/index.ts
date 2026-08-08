@@ -16,11 +16,26 @@ Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
+    const authorization = request.headers.get('Authorization');
+    if (!authorization) throw new Error('You must be signed in.');
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    
+    // Verify caller is admin
+    const authClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
+    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    if (userError || !user) throw new Error('Invalid login session.');
+
     const adminClient = createClient(supabaseUrl, serviceKey);
+    const { data: caller, error: callerError } = await adminClient
+      .from('profiles').select('role').eq('id', user.id).single();
+    if (callerError || caller?.role !== 'admin') throw new Error('Only administrators can approve registrations.');
 
     const { isIndividual, teamName, college, leader, members } = await request.json();
+
+    const authSchemaClient = createClient(supabaseUrl, serviceKey, { db: { schema: 'auth' } });
 
     // 1. Inputs Normalisation & Validation
     const cleanLeader: UserPayload = {
@@ -42,14 +57,11 @@ Deno.serve(async (request) => {
 
     const cleanTeamName = String(teamName || '').trim();
     const cleanCollege = String(college || '').trim();
-    const individualGroupId = `IND-${cleanLeader.email.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
-    const groupId = isIndividual ? individualGroupId : cleanTeamName;
 
     if (!cleanCollege) {
       throw new Error('College name is required.');
     }
 
-    // 2. Validate Team vs Individual specific logic
     if (!isIndividual) {
       if (!cleanTeamName) {
         throw new Error('Team name is required for team registrations.');
@@ -62,68 +74,49 @@ Deno.serve(async (request) => {
         .eq('id', cleanTeamName)
         .maybeSingle();
       if (existingGroup) {
-        throw new Error(`Team name "${cleanTeamName}" is already taken. Please choose another name.`);
+        throw new Error(`Team name "${cleanTeamName}" is already taken.`);
       }
 
-      // Combine names and emails to check for duplicates
-      const allNames = [cleanLeader.full_name, ...cleanMembers.map(m => m.full_name)];
-      const allEmails = [cleanLeader.email, ...cleanMembers.map(m => m.email)];
-
-      const uniqueNames = new Set(allNames.map(n => n.toLowerCase()));
-      if (uniqueNames.size !== allNames.length) {
-        throw new Error('Duplicate names are not allowed in the team registration. Please verify member names.');
-      }
-
-      const uniqueEmails = new Set(allEmails);
-      if (uniqueEmails.size !== allEmails.length) {
-        throw new Error('Duplicate emails are not allowed in the team registration. Please verify member emails.');
-      }
-
-      // Verify at least one female member in the team
+      // Verify female member rule
       const hasFemale = [cleanLeader, ...cleanMembers].some(m => m.gender === 'female');
       if (!hasFemale) {
-        throw new Error('A team must include at least one female member to participate.');
+        throw new Error('A team must include at least one female member.');
       }
     }
 
-    // 3. Verify that none of the emails are already registered. Auth users
-    // must be read through the Auth Admin API rather than the auth schema.
+    // Verify that none of the emails are already registered in auth.users
     const allEmailsToCheck = [cleanLeader.email, ...cleanMembers.map(m => m.email)];
-    const { data: authUsersPage, error: checkAuthError } = await adminClient.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    if (checkAuthError) throw new Error(`Auth verification failed: ${checkAuthError.message}`);
+    const { data: existingAuthUsers, error: checkAuthError } = await authSchemaClient
+      .from('users')
+      .select('email')
+      .in('email', allEmailsToCheck);
+    
+    if (checkAuthError) throw checkAuthError;
 
-    const existingAuthEmails = new Set(
-      (authUsersPage.users || []).map(user => user.email?.trim().toLowerCase()).filter(Boolean)
-    );
-    const failedEmail = allEmailsToCheck.find(email => existingAuthEmails.has(email));
-    if (failedEmail) {
-      throw new Error(`The email address "${failedEmail}" is already registered in the system. Please use a unique email.`);
+    if (existingAuthUsers && existingAuthUsers.length > 0) {
+      const failedEmail = existingAuthUsers[0].email;
+      throw new Error(`The email address "${failedEmail}" is already registered.`);
     }
 
-    // 4. Create a group for every registration. Individual applicants receive
-    // a one-person group so they are visible and manageable in the Admin panel.
-    {
+    // Create the group (if Team)
+    if (!isIndividual) {
       const { error: groupError } = await adminClient.from('groups').insert({
-        id: groupId,
-        domain: isIndividual ? 'Individual Participation' : 'General'
+        id: cleanTeamName,
+        domain: 'General'
       });
-      if (groupError) throw new Error(`Failed to create team: ${groupError.message}`);
+      if (groupError) throw groupError;
     }
 
-    // 5. Provision Users (Leader + Members)
+    // Provision Users (Leader gets student123 password; Members get random secure passwords)
     const allUsersToCreate = [
-      { payload: cleanLeader, isLead: true, group: groupId, isIeee: cleanLeader.is_ieee_member },
-      ...cleanMembers.map(m => ({ payload: m, isLead: false, group: groupId, isIeee: false }))
+      { payload: cleanLeader, isLead: !isIndividual, group: isIndividual ? null : cleanTeamName, isIeee: cleanLeader.is_ieee_member, password: 'student123' },
+      ...cleanMembers.map(m => ({ payload: m, isLead: false, group: cleanTeamName, isIeee: false, password: crypto.randomUUID() }))
     ];
 
     for (const u of allUsersToCreate) {
-      // Create user auth account without sending verification emails
       const { data: authUser, error: inviteError } = await adminClient.auth.admin.createUser({
         email: u.payload.email,
-        password: 'student123',
+        password: u.password,
         email_confirm: true,
         user_metadata: { full_name: u.payload.full_name, role: 'student' }
       });
@@ -142,8 +135,7 @@ Deno.serve(async (request) => {
         group_id: u.group,
         college: cleanCollege,
         is_ieee_member: u.isIeee,
-        gender: u.payload.gender,
-        mentor_capacity: 0,
+        gender: u.payload.gender
       });
 
       if (profileError) {
@@ -151,8 +143,8 @@ Deno.serve(async (request) => {
       }
     }
 
-    return Response.json({ success: true, groupId }, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return Response.json({ success: true }, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
-    return Response.json({ error: error.message || 'Registration failed.' }, { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return Response.json({ error: error.message || 'Registration approval failed.' }, { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

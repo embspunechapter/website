@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { 
-  Users, Settings, FileSpreadsheet, Upload, UserPlus, 
+  Users, Settings, FileSpreadsheet, Upload, UserPlus, Check,
   Bell, FileText, Award, BarChart3, Trash2, AlertTriangle, Search, Plus, Activity,
   BookOpen, Calendar
 } from 'lucide-react';
@@ -30,6 +30,7 @@ export default function AdminDashboard() {
   const [meetings, setMeetings] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [certificates, setCertificates] = useState([]);
+  const [registrations, setRegistrations] = useState([]);
   const [selectedMembers, setSelectedMembers] = useState({});
   const [managementSearch, setManagementSearch] = useState('');
   const [manageRole, setManageRole] = useState('student');
@@ -108,6 +109,20 @@ export default function AdminDashboard() {
       setMilestonesData(milestoneData || []);
       setTemplates(templateData || []);
       setMeetings(meetingData || []);
+      
+      try {
+        const { data: regData, error: regError } = await supabase
+          .from('registrations')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!regError) {
+          setRegistrations(regData || []);
+        } else {
+          console.warn('Registrations table missing:', regError.message);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch registrations:', err);
+      }
       
       setGroups((groupData || []).map((group) => ({
         ...group,
@@ -1082,6 +1097,64 @@ export default function AdminDashboard() {
     }
   };
 
+  const approveRegistration = async (reg) => {
+    if (!window.confirm(`Are you sure you want to approve registration for "${reg.is_individual ? reg.leader_name : reg.team_name}"?`)) return;
+    setSaving(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('register-team', {
+        body: {
+          isIndividual: reg.is_individual,
+          teamName: reg.team_name,
+          college: reg.college,
+          leader: {
+            full_name: reg.leader_name,
+            email: reg.leader_email,
+            gender: reg.leader_gender,
+            is_ieee_member: reg.leader_is_ieee
+          },
+          members: reg.members
+        }
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const { error: updateError } = await supabase
+        .from('registrations')
+        .update({ status: 'approved' })
+        .eq('id', reg.id);
+      if (updateError) throw updateError;
+
+      showNotice(`Registration approved successfully! Accounts for group lead / individual have been created.`);
+      await fetchDashboardData();
+    } catch (err) {
+      console.error('Approval failed:', err);
+      showNotice(`Failed to approve registration: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const rejectRegistration = async (regId) => {
+    if (!window.confirm("Are you sure you want to reject this registration request?")) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('registrations')
+        .update({ status: 'rejected' })
+        .eq('id', regId);
+      if (error) throw error;
+
+      showNotice("Registration request rejected.");
+      await fetchDashboardData();
+    } catch (err) {
+      console.error('Rejection failed:', err);
+      showNotice(`Failed to reject registration: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
 
 
   // Suggestions for Group Mentor Assignment
@@ -1130,6 +1203,21 @@ export default function AdminDashboard() {
           <button className={`btn ${activeTab === 'certificates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('certificates')}><Award size={16} /> Certificates</button>
            <button className={`btn ${activeTab === 'templates' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('templates')}><FileSpreadsheet size={16} /> Formats</button>
           <button className={`btn ${activeTab === 'meetings' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('meetings')}><BookOpen size={16} /> Meetings</button>
+          <button className={`btn ${activeTab === 'registrations' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setActiveTab('registrations')} style={{ position: 'relative' }}>
+            <UserPlus size={16} /> Registrations
+            {registrations.filter(r => r.status === 'pending').length > 0 && (
+              <span className="badge badge-error" style={{
+                position: 'absolute',
+                top: '-8px',
+                right: '-8px',
+                padding: '0.15rem 0.35rem',
+                fontSize: '0.65rem',
+                borderRadius: 'var(--radius-full)'
+              }}>
+                {registrations.filter(r => r.status === 'pending').length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -2344,6 +2432,119 @@ export default function AdminDashboard() {
                   </article>
                 );
               })
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'registrations' && (
+        <div className="glass animate-fade-in" style={{ padding: '1.5rem', borderRadius: 'var(--radius-lg)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h3><UserPlus size={20} /> Pending Registrations</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                Review and approve or reject student group and individual applications to participate in the internship program.
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {registrations.filter(r => r.status === 'pending').length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>No pending registrations to review.</p>
+            ) : (
+              registrations.filter(r => r.status === 'pending').map(reg => (
+                <div 
+                  key={reg.id} 
+                  style={{ 
+                    padding: '1.5rem', 
+                    background: '#fff', 
+                    borderRadius: 'var(--radius-md)', 
+                    border: '1px solid var(--border-color)', 
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.01)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1rem'
+                  }}
+                >
+                  {/* Header Row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <span 
+                        className={`badge ${reg.is_individual ? 'badge-info' : 'badge-primary'}`} 
+                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', display: 'inline-block', marginBottom: '0.35rem' }}
+                      >
+                        {reg.is_individual ? 'Individual applicant' : 'Team registration'}
+                      </span>
+                      <h4 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--ieee-dark-blue)' }}>
+                        {reg.is_individual ? reg.leader_name : reg.team_name}
+                      </h4>
+                      <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        <strong>College:</strong> {reg.college}
+                      </p>
+                    </div>
+                    
+                    {/* Action buttons */}
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button 
+                        className="btn btn-outline" 
+                        onClick={() => rejectRegistration(reg.id)}
+                        disabled={saving}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                      >
+                        <Trash2 size={14} /> Reject
+                      </button>
+                      <button 
+                        className="btn btn-primary" 
+                        onClick={() => approveRegistration(reg)}
+                        disabled={saving}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success)', borderColor: 'var(--success)' }}
+                      >
+                        <Check size={14} /> Approve & Provision
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Leader details */}
+                  <div style={{ padding: '0.75rem 1rem', background: 'rgba(59, 130, 246, 0.02)', border: '1px dashed rgba(59, 130, 246, 0.2)', borderRadius: 'var(--radius-sm)' }}>
+                    <strong style={{ display: 'block', fontSize: '0.85rem', color: 'var(--ieee-blue)', marginBottom: '0.5rem' }}>
+                      {reg.is_individual ? 'Applicant Contact' : 'Team Lead Contact'}
+                    </strong>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.5rem', fontSize: '0.8rem' }}>
+                      <div><strong>Name:</strong> {reg.leader_name}</div>
+                      <div><strong>Email:</strong> {reg.leader_email}</div>
+                      <div><strong>Gender:</strong> <span style={{ textTransform: 'capitalize' }}>{reg.leader_gender}</span></div>
+                      <div><strong>IEEE Member:</strong> {reg.leader_is_ieee ? 'Yes' : 'No'}</div>
+                    </div>
+                  </div>
+
+                  {/* Team members list if team */}
+                  {!reg.is_individual && reg.members && reg.members.length > 0 && (
+                    <div>
+                      <strong style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                        Team Members ({reg.members.length})
+                      </strong>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                        {reg.members.map((m, idx) => (
+                          <div 
+                            key={idx} 
+                            style={{ 
+                              padding: '0.6rem 0.8rem', 
+                              border: '1px solid var(--border-color)', 
+                              borderRadius: 'var(--radius-sm)', 
+                              background: 'var(--bg-primary)',
+                              fontSize: '0.75rem' 
+                            }}
+                          >
+                            <div style={{ fontWeight: 600 }}>{m.full_name}</div>
+                            <div style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{m.email}</div>
+                            <div style={{ color: 'var(--text-secondary)', textTransform: 'capitalize', marginTop: '0.2rem' }}>Gender: {m.gender}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
             )}
           </div>
         </div>
